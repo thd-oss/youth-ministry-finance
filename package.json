@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && cd dist && git init && git checkout -b gh-pages && git add -A && git commit -m 'deploy: GitHub Pages' && git push --force https://github.com/thd-oss/youth-ministry-finance.git gh-pages:gh-pages && cd .. && rm -rf dist/.git"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
