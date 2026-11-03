@@ -585,6 +585,7 @@ export const App: React.FC = () => {
               setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
+            onQuickSaveTransaction={handleSaveTransaction}
           />
         )}
 

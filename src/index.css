@@ -92,6 +92,18 @@ dialog::backdrop {
     display: none !important;
   }
 
+  .print-force-show {
+    display: block !important;
+  }
+
+  .a4-scale-outer,
+  .a4-scale-inner {
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
+    overflow: visible !important;
+  }
+
   .print-container {
     padding: 0 !important;
     margin: 0 !important;
