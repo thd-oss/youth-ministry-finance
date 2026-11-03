@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    letter-spacing: -0.025em;
+    color: #191F28;
+    background-color: #F2F4F6;
+  }
+
+  body {
+    margin: 0;
+    background-color: #F2F4F6;
+    color: #191F28;
+    letter-spacing: -0.025em;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Native Dialog & Bottom Sheet Styles */
+dialog.tds-bottom-sheet {
+  margin: auto auto 0 auto;
+  width: 100%;
+  max-width: 600px;
+  border: none;
+  padding: 0;
+  background: #FFFFFF;
+  border-top-left-radius: 28px;
+  border-top-right-radius: 28px;
+  color: #191F28;
+  max-height: 92dvh;
+  overflow: hidden;
+}
+
+dialog.tds-modal-sheet {
+  margin: auto;
+  width: calc(100% - 32px);
+  max-width: 680px;
+  border: none;
+  padding: 0;
+  background: #FFFFFF;
+  border-radius: 24px;
+  color: #191F28;
+  max-height: 88dvh;
+  overflow: hidden;
+}
+
+dialog::backdrop {
+  background-color: rgba(25, 31, 40, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+/* Scan Filter for Receipt Printing */
+.receipt-scan-filter {
+  filter: grayscale(100%) contrast(145%) brightness(105%);
+}
+
+/* A4 Screen Preview Layout */
+.a4-page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 15mm;
+  margin: 0 auto;
+  box-sizing: border-box;
+  background: #FFFFFF;
+  color: #191F28;
+  position: relative;
+}
+
+/* Print CSS Rules (@media print 필수 준수 사항) */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    background: #FFFFFF !important;
+    color: #191F28 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #FFFFFF !important;
+  }
+
+  .a4-page {
+    width: 210mm !important;
+    min-height: 297mm !important;
+    padding: 15mm !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    background: #FFFFFF !important;
+    box-shadow: none !important;
+  }
+
+  .a4-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .receipt-card,
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
