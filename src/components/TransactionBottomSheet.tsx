@@ -212,7 +212,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       const result = await analyzeReceiptWithGemini({
         imageDataUrl: dataUrl,
         apiKey: geminiApiKey,
-        model: geminiModel || 'gemini-2.5-flash',
+        model: geminiModel || 'gemini-3-flash-preview',
         expenseCategories,
         mokjangs,
         defaultYearMonth,
@@ -388,10 +388,17 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 Gemini 계정 연결하기
               </button>
             ) : (
-              <span className="text-[11.5px] font-semibold text-[#3182F6] flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenGeminiSettings();
+                }}
+                className="text-[11.5px] font-semibold text-[#3182F6] flex items-center gap-1 hover:underline"
+              >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Gemini AI 자동 판독 켜짐
-              </span>
+                <span>AI 고정 모델: {geminiModel}</span>
+              </button>
             )}
           </div>
 

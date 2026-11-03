@@ -1,4 +1,5 @@
 import {
+  GeminiModelOption,
   LedgerAccount,
   MokjangExpenseSubType,
   MokjangGroup,
@@ -19,10 +20,243 @@ export interface ReceiptAiAnalysisResult {
   summaryComment: string;
 }
 
+export const FALLBACK_GEMINI_MODELS: GeminiModelOption[] = [
+  {
+    id: 'gemini-3-flash-preview',
+    displayName: 'Gemini 3 Flash Preview (최신 고속 비전 · 권장)',
+  },
+  {
+    id: 'gemini-3.1-flash-lite-preview',
+    displayName: 'Gemini 3.1 Flash-Lite Preview (초경량 고속)',
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    displayName: 'Gemini 3.1 Pro Preview (고정밀 다품목 판독)',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    displayName: 'Gemini 2.5 Flash (안정형 비전 모델)',
+  },
+  {
+    id: 'gemini-2.0-flash',
+    displayName: 'Gemini 2.0 Flash (호환용 경량 모델)',
+  },
+];
+
+export function sanitizeGeminiApiKey(rawKey: string): string {
+  return (rawKey || '').replace(/[\s"'`]/g, '').trim();
+}
+
 /**
- * 사용자의 Gemini API Key를 이용해 영수증 이미지를 멀티모달로 분석하고
- * 장부 입력에 필요한 모든 필드(금액, 거래일자, 가맹점/적요, 품목별 단가×수량 산출근거, 추천 관/항 카테고리)를
- * JSON Schema(Structured Output)로 정확히 추출합니다.
+ * 모델 정렬 우선순위 점수 계산:
+ * 최신 세대(Gemini 3.x > 2.5 > 2.0) 및 영수증 판독에 최적화된 Flash 모델을 상단에 배치합니다.
+ */
+function scoreModelPriority(modelId: string): number {
+  let score = 0;
+
+  if (modelId.startsWith('gemini-3')) score += 300;
+  else if (modelId.startsWith('gemini-2.5')) score += 200;
+  else if (modelId.startsWith('gemini-2.0')) score += 100;
+
+  if (modelId.includes('flash') && !modelId.includes('lite')) score += 40;
+  else if (modelId.includes('flash-lite')) score += 30;
+  else if (modelId.includes('pro')) score += 20;
+
+  // 날짜 스냅샷(-001, -05-20 등)보다 대표 별칭(alias) 모델 우선
+  if (!/\d{3,4}|-\d{2}-\d{2}/.test(modelId)) score += 10;
+  if (modelId.includes('latest')) score -= 5;
+
+  return score;
+}
+
+/**
+ * 사용자의 Gemini API Key로 Google 서버(GET /v1beta/models)에 질의하여
+ * 현재 계정에서 실제 호출 가능한(generateContent 지원) Gemini 모델 목록을 읽어옵니다.
+ */
+export async function fetchAvailableGeminiModels(apiKey: string): Promise<{
+  ok: boolean;
+  models: GeminiModelOption[];
+  recommendedModelId?: string;
+  message: string;
+}> {
+  const cleanKey = sanitizeGeminiApiKey(apiKey);
+  if (!cleanKey) {
+    return {
+      ok: false,
+      models: [],
+      message: '먼저 Gemini API 키를 입력해 주세요.',
+    };
+  }
+
+  try {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=${encodeURIComponent(
+      cleanKey
+    )}`;
+    const res = await fetch(endpoint, { method: 'GET' });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      const errMsg =
+        errJson?.error?.message || `API 키 인증 실패 (HTTP ${res.status})`;
+      return {
+        ok: false,
+        models: [],
+        message: `❌ 모델 목록 조회 실패: ${errMsg}`,
+      };
+    }
+
+    const data = await res.json();
+    const rawModels: Array<{
+      name?: string;
+      displayName?: string;
+      description?: string;
+      supportedGenerationMethods?: string[];
+    }> = Array.isArray(data?.models) ? data.models : [];
+
+    // 영수증 이미지/텍스트 분석(generateContent)에 사용할 수 없는 특수 전용 모델 제외 키워드
+    const excludedKeywords = [
+      'tts',
+      'embedding',
+      'imagen',
+      'veo',
+      'aqa',
+      'audio',
+      'robotics',
+      'computer-use',
+      'learnlm',
+      'gemma',
+      'nano',
+      'image-generation',
+      '-image',
+      'bisheng',
+    ];
+
+    const filtered: GeminiModelOption[] = rawModels
+      .filter((m) => {
+        const name = m.name || '';
+        const id = name.replace(/^models\//, '');
+        if (!id.startsWith('gemini-')) return false;
+        const methods = m.supportedGenerationMethods || [];
+        if (!methods.includes('generateContent')) return false;
+        const lowerId = id.toLowerCase();
+        if (excludedKeywords.some((kw) => lowerId.includes(kw))) return false;
+        return true;
+      })
+      .map((m) => {
+        const id = (m.name || '').replace(/^models\//, '');
+        return {
+          id,
+          displayName: m.displayName ? `${m.displayName} (${id})` : id,
+          description: m.description,
+        };
+      })
+      .sort((a, b) => scoreModelPriority(b.id) - scoreModelPriority(a.id));
+
+    if (filtered.length === 0) {
+      return {
+        ok: false,
+        models: [],
+        message:
+          '❌ 해당 API 키에서 generateContent를 지원하는 Gemini 모델을 찾지 못했습니다.',
+      };
+    }
+
+    const recommendedModelId = filtered[0].id;
+
+    return {
+      ok: true,
+      models: filtered,
+      recommendedModelId,
+      message: `✅ 사용 가능한 모델 ${filtered.length}개를 불러왔습니다. 아래에서 고정할 모델을 선택하세요.`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      models: [],
+      message: `❌ 네트워크 오류로 모델 목록을 불러오지 못했습니다 (${
+        e instanceof Error ? e.message : '연결 실패'
+      }).`,
+    };
+  }
+}
+
+/**
+ * 사용자가 선택한 특정 Gemini 모델이 실제 generateContent 요청에 정상 응답하는지 검증합니다.
+ */
+export async function testGeminiConnection(
+  apiKey: string,
+  model: string
+): Promise<{ ok: boolean; message: string; verifiedModel: string }> {
+  const cleanKey = sanitizeGeminiApiKey(apiKey);
+  const targetModel = (model || 'gemini-3-flash-preview')
+    .replace(/^models\//, '')
+    .trim();
+
+  if (!cleanKey) {
+    return {
+      ok: false,
+      verifiedModel: targetModel,
+      message: 'API 키를 입력해 주세요.',
+    };
+  }
+
+  try {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      targetModel
+    )}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: '연결 확인 테스트입니다. OK 라고만 답하세요.' }],
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      const rawErrMsg = errJson?.error?.message || `HTTP ${res.status}`;
+      return {
+        ok: false,
+        verifiedModel: targetModel,
+        message: `❌ [${targetModel}] 모델 호출 실패: ${rawErrMsg} (목록에서 다른 Flash 모델을 선택해 보세요)`,
+      };
+    }
+
+    const data = await res.json();
+    const hasCandidate =
+      Array.isArray(data?.candidates) && data.candidates.length > 0;
+    if (!hasCandidate) {
+      return {
+        ok: false,
+        verifiedModel: targetModel,
+        message: `❌ [${targetModel}] 응답이 비어 있습니다. 다른 모델을 선택해 주세요.`,
+      };
+    }
+
+    return {
+      ok: true,
+      verifiedModel: targetModel,
+      message: `✅ [${targetModel}] 모델 검증 및 고정 완료! 이제 영수증 사진을 올리면 이 모델로 자동 추출합니다.`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      verifiedModel: targetModel,
+      message: `❌ 네트워크 오류로 연결을 확인할 수 없습니다 (${
+        e instanceof Error ? e.message : '오류'
+      }).`,
+    };
+  }
+}
+
+/**
+ * 사용자의 Gemini API Key와 고정된 모델을 이용해 영수증 이미지를 멀티모달로 분석하고
+ * 장부 입력에 필요한 모든 필드를 JSON Schema(Structured Output)로 추출합니다.
  */
 export async function analyzeReceiptWithGemini(params: {
   imageDataUrl: string;
@@ -35,16 +269,18 @@ export async function analyzeReceiptWithGemini(params: {
   const {
     imageDataUrl,
     apiKey,
-    model = 'gemini-2.5-flash',
+    model = 'gemini-3-flash-preview',
     expenseCategories,
     mokjangs,
     defaultYearMonth,
   } = params;
 
-  const cleanKey = apiKey.trim();
+  const cleanKey = sanitizeGeminiApiKey(apiKey);
   if (!cleanKey) {
     throw new Error('Gemini API 키가 설정되지 않았습니다.');
   }
+
+  const targetModel = model.replace(/^models\//, '').trim();
 
   const commaIndex = imageDataUrl.indexOf(',');
   if (commaIndex === -1) {
@@ -56,7 +292,6 @@ export async function analyzeReceiptWithGemini(params: {
   const mimeMatch = header.match(/data:(.*?);/);
   const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
 
-  // SVG Data URL인 경우 Canvas를 통해 PNG로 래스터화하거나 텍스트 디코딩으로 전달
   let finalMimeType = mimeType;
   let finalBase64 = base64Data;
 
@@ -92,7 +327,7 @@ export async function analyzeReceiptWithGemini(params: {
 11. summaryComment: 사용자에게 보여줄 1줄 완료 브리핑 (예: "김밥천국 70,000원 · 품목 산출근거 추출 완료").`;
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    model
+    targetModel
   )}:generateContent?key=${encodeURIComponent(cleanKey)}`;
 
   const response = await fetch(endpoint, {
@@ -165,17 +400,29 @@ export async function analyzeReceiptWithGemini(params: {
     } catch {
       // ignore
     }
-    throw new Error(`Gemini API 호출 실패 (${errDetail})`);
+    throw new Error(`[${targetModel}] API 호출 실패 (${errDetail})`);
   }
 
   const data = await response.json();
-  const rawText =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const parts: Array<{ text?: string; thought?: boolean }> =
+    data?.candidates?.[0]?.content?.parts || [];
+
+  // Thinking 모델(Gemini 2.5 / 3)의 경우 thought 파트 뒤에 실제 JSON 텍스트 파트가 위치하므로 비-thought 파트를 우선 추출
+  const nonThoughtPart = [...parts]
+    .reverse()
+    .find((p) => !p.thought && typeof p.text === 'string' && p.text.trim());
+  const rawText = (nonThoughtPart?.text || parts?.[0]?.text || '').trim();
+
   if (!rawText) {
     throw new Error('Gemini로부터 분석 결과를 받지 못했습니다.');
   }
 
-  const parsed = JSON.parse(rawText) as ReceiptAiAnalysisResult;
+  const cleanedJsonText = rawText
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  const parsed = JSON.parse(cleanedJsonText) as ReceiptAiAnalysisResult;
 
   // 카테고리 유효성 보정
   const matchedCategory =
@@ -208,56 +455,6 @@ export async function analyzeReceiptWithGemini(params: {
       parsed.summaryComment ||
       `${parsed.storeName || '영수증'} ${(Number(parsed.amount) || 0).toLocaleString('ko-KR')}원 자동 판독 완료`,
   };
-}
-
-/**
- * Gemini API 키가 정상 작동하는지 빠르게 연결 테스트합니다.
- */
-export async function testGeminiConnection(
-  apiKey: string,
-  model = 'gemini-2.5-flash'
-): Promise<{ ok: boolean; message: string }> {
-  const cleanKey = apiKey.trim();
-  if (!cleanKey) {
-    return { ok: false, message: 'API 키를 입력해 주세요.' };
-  }
-
-  try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:generateContent?key=${encodeURIComponent(cleanKey)}`;
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: '연결 확인: OK만 답하세요.' }] }],
-        generationConfig: { maxOutputTokens: 10 },
-      }),
-    });
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      return {
-        ok: false,
-        message:
-          errJson?.error?.message || `인증 실패 (HTTP ${res.status})`,
-      };
-    }
-
-    return {
-      ok: true,
-      message: `✅ Gemini (${model}) 연결 성공! 이제 영수증 사진을 올리면 자동으로 내용을 채워줍니다.`,
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      message:
-        e instanceof Error
-          ? e.message
-          : '네트워크 오류로 연결을 확인할 수 없습니다.',
-    };
-  }
 }
 
 function rasterizeDataUrlToJpeg(dataUrl: string): Promise<string> {

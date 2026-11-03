@@ -617,7 +617,7 @@ export const App: React.FC = () => {
         presetMokjangSubType={presetMokjangSubType}
         autoTriggerCamera={autoTriggerCamera}
         geminiApiKey={settings.geminiApiKey || ''}
-        geminiModel={settings.geminiModel || 'gemini-2.5-flash'}
+        geminiModel={settings.geminiModel || 'gemini-3-flash-preview'}
         onOpenGeminiSettings={() => openSettingsAt('gemini')}
         incomeCategories={fiscalSchema.activeIncomeCategories}
         expenseCategories={fiscalSchema.activeExpenseCategories}

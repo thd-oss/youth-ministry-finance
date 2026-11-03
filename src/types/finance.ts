@@ -93,10 +93,17 @@ export interface BudgetDocument {
   items: BudgetLineItem[];
 }
 
+export interface GeminiModelOption {
+  id: string; // 예: 'gemini-3-flash-preview'
+  displayName: string; // 예: 'Gemini 3 Flash Preview'
+  description?: string;
+}
+
 export interface AppSettings {
   gasWebAppUrl: string;
   geminiApiKey: string;
   geminiModel: string;
+  availableGeminiModels?: GeminiModelOption[];
   isProductionMode: boolean;
   departmentName: string;
   authorName: string;

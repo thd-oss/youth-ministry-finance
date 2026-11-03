@@ -9,7 +9,8 @@ import { generateMockReceiptSvgDataUrl } from './imageCompressor';
 export const DEFAULT_SETTINGS: AppSettings = {
   gasWebAppUrl: '',
   geminiApiKey: '',
-  geminiModel: 'gemini-2.5-flash',
+  geminiModel: 'gemini-3-flash-preview',
+  availableGeminiModels: [],
   isProductionMode: false,
   departmentName: '은혜교회 청년부',
   authorName: '김송연',

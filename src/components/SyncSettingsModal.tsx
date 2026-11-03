@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Check,
+  CheckCircle2,
   CloudDownload,
   CloudUpload,
   Copy,
-  Database,
   Download,
   ExternalLink,
   Eye,
@@ -12,15 +13,22 @@ import {
   FileSpreadsheet,
   KeyRound,
   Loader2,
+  Pin,
+  RefreshCw,
   Rocket,
   RotateCcw,
   Sparkles,
   Upload,
 } from 'lucide-react';
-import { AppSettings } from '../types/finance';
+import { AppSettings, GeminiModelOption } from '../types/finance';
 import { GAS_CODE_TEMPLATE } from '../utils/gasCodeTemplate';
 import { formatNumber } from '../utils/koreanCurrency';
-import { testGeminiConnection } from '../utils/receiptAiAnalyzer';
+import {
+  FALLBACK_GEMINI_MODELS,
+  fetchAvailableGeminiModels,
+  sanitizeGeminiApiKey,
+  testGeminiConnection,
+} from '../utils/receiptAiAnalyzer';
 import { TdsDialog } from './TdsDialog';
 
 export type SettingsTabType = 'gemini' | 'connection' | 'code_gs' | 'backup';
@@ -40,6 +48,11 @@ interface SyncSettingsModalProps {
   onResetSampleData: () => void;
 }
 
+interface FeedbackBannerState {
+  tone: 'info' | 'success' | 'error';
+  message: string;
+}
+
 export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   open,
   onClose,
@@ -54,12 +67,28 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   onStartCleanLedger,
   onResetSampleData,
 }) => {
+  const wasOpenRef = useRef<boolean>(false);
+
   const [activeTab, setActiveTab] = useState<SettingsTabType>(initialTab);
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>(
     settings.geminiApiKey || ''
   );
   const [geminiModelInput, setGeminiModelInput] = useState<string>(
-    settings.geminiModel || 'gemini-2.5-flash'
+    settings.geminiModel || 'gemini-3-flash-preview'
+  );
+  const [availableModels, setAvailableModels] = useState<GeminiModelOption[]>(
+    () =>
+      settings.availableGeminiModels &&
+      settings.availableGeminiModels.length > 0
+        ? settings.availableGeminiModels
+        : FALLBACK_GEMINI_MODELS
+  );
+  const [hasFetchedLiveModels, setHasFetchedLiveModels] = useState<boolean>(
+    () =>
+      Boolean(
+        settings.availableGeminiModels &&
+          settings.availableGeminiModels.length > 0
+      )
   );
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
 
@@ -69,20 +98,37 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
 
   const [carryoverStr, setCarryoverStr] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
-  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [feedback, setFeedback] = useState<FeedbackBannerState | null>(null);
+  const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
+  const [isTestingModel, setIsTestingModel] = useState<boolean>(false);
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
 
+  // 모달이 닫혀 있다가 열리는 시점(false -> true)에만 초기 상태를 세팅하여,
+  // 모달 내부에서 설정을 저장해도 탭이나 검증 결과 배너가 절대 사라지지 않도록 보장
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
+      wasOpenRef.current = true;
       setActiveTab(initialTab);
       setGeminiKeyInput(settings.geminiApiKey || '');
-      setGeminiModelInput(settings.geminiModel || 'gemini-2.5-flash');
+      setGeminiModelInput(settings.geminiModel || 'gemini-3-flash-preview');
+      if (
+        settings.availableGeminiModels &&
+        settings.availableGeminiModels.length > 0
+      ) {
+        setAvailableModels(settings.availableGeminiModels);
+        setHasFetchedLiveModels(true);
+      } else {
+        setAvailableModels(FALLBACK_GEMINI_MODELS);
+        setHasFetchedLiveModels(false);
+      }
       setUrlInput(settings.gasWebAppUrl || '');
       setDeptInput(settings.departmentName || '은혜교회 청년부');
       setAuthorInput(settings.authorName || '김송연');
-      setStatusMessage('');
+      setFeedback(null);
+    } else if (!open && wasOpenRef.current) {
+      wasOpenRef.current = false;
     }
   }, [open, initialTab, settings]);
 
@@ -91,31 +137,136 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     return digits ? Number(digits) : 0;
   };
 
-  const handleTestAndSaveGemini = async () => {
-    const trimmedKey = geminiKeyInput.trim();
-    if (!trimmedKey) {
-      onSaveSettings({
-        ...settings,
-        geminiApiKey: '',
-        geminiModel: geminiModelInput,
+  /**
+   * Step 1: 사용자의 API 키로 Google 서버(GET /v1beta/models)에서 실제 사용 가능한 모델 목록을 읽어옵니다.
+   */
+  const handleFetchAvailableModels = async () => {
+    const cleanKey = sanitizeGeminiApiKey(geminiKeyInput);
+    if (!cleanKey) {
+      setFeedback({
+        tone: 'error',
+        message: '먼저 Gemini API 키(AIzaSy...)를 입력해 주세요.',
       });
-      setStatusMessage('Gemini API 키가 해제되었습니다.');
       return;
     }
 
-    setIsBusy(true);
-    setStatusMessage('Gemini AI 연결 상태를 확인하는 중...');
-    const result = await testGeminiConnection(trimmedKey, geminiModelInput);
-    setIsBusy(false);
+    setIsFetchingModels(true);
+    setFeedback({
+      tone: 'info',
+      message:
+        'Google 서버에서 이 API 키로 사용 가능한 최신 Gemini 모델 목록을 불러오는 중...',
+    });
 
-    if (result.ok) {
+    const result = await fetchAvailableGeminiModels(cleanKey);
+    setIsFetchingModels(false);
+
+    if (!result.ok) {
+      setFeedback({
+        tone: 'error',
+        message: result.message,
+      });
+      return;
+    }
+
+    setGeminiKeyInput(cleanKey);
+    setAvailableModels(result.models);
+    setHasFetchedLiveModels(true);
+
+    // 기존 선택 모델이 조회된 가용 목록에 있으면 유지하고, 없으면 가장 적합한 1순위 모델 자동 선택
+    const stillExists = result.models.some((m) => m.id === geminiModelInput);
+    const nextSelectedModel = stillExists
+      ? geminiModelInput
+      : result.recommendedModelId || result.models[0].id;
+
+    setGeminiModelInput(nextSelectedModel);
+
+    onSaveSettings({
+      ...settings,
+      geminiApiKey: cleanKey,
+      geminiModel: nextSelectedModel,
+      availableGeminiModels: result.models,
+    });
+
+    setFeedback({
+      tone: 'success',
+      message: `${result.message} (자동 추천 선택: ${nextSelectedModel})`,
+    });
+  };
+
+  /**
+   * Step 2: 목록에서 사용자가 선택한 모델을 실제 호출(generateContent)로 검증한 뒤 고정 저장합니다.
+   */
+  const handleVerifyAndPinModel = async () => {
+    const cleanKey = sanitizeGeminiApiKey(geminiKeyInput);
+    if (!cleanKey) {
       onSaveSettings({
         ...settings,
-        geminiApiKey: trimmedKey,
-        geminiModel: geminiModelInput,
+        geminiApiKey: '',
+      });
+      setFeedback({
+        tone: 'info',
+        message: 'Gemini API 키가 해제되었습니다.',
+      });
+      return;
+    }
+
+    setIsTestingModel(true);
+    let currentModels = availableModels;
+    let targetModel = geminiModelInput;
+
+    // 아직 실시간 모델 목록을 안 불러온 상태라면 먼저 모델 목록부터 조회하여 유효 모델 확인
+    if (!hasFetchedLiveModels) {
+      setFeedback({
+        tone: 'info',
+        message: '사용 가능한 모델 목록을 먼저 조회하는 중...',
+      });
+      const listRes = await fetchAvailableGeminiModels(cleanKey);
+      if (!listRes.ok) {
+        setIsTestingModel(false);
+        setFeedback({
+          tone: 'error',
+          message: listRes.message,
+        });
+        return;
+      }
+      currentModels = listRes.models;
+      setAvailableModels(currentModels);
+      setHasFetchedLiveModels(true);
+
+      const existsInLive = currentModels.some((m) => m.id === targetModel);
+      if (!existsInLive) {
+        targetModel = listRes.recommendedModelId || currentModels[0].id;
+        setGeminiModelInput(targetModel);
+      }
+    }
+
+    setFeedback({
+      tone: 'info',
+      message: `[${targetModel}] 모델로 실제 응답 테스트 및 고정을 진행하는 중...`,
+    });
+
+    const verifyResult = await testGeminiConnection(cleanKey, targetModel);
+    setIsTestingModel(false);
+
+    if (verifyResult.ok) {
+      setGeminiKeyInput(cleanKey);
+      setGeminiModelInput(verifyResult.verifiedModel);
+      onSaveSettings({
+        ...settings,
+        geminiApiKey: cleanKey,
+        geminiModel: verifyResult.verifiedModel,
+        availableGeminiModels: currentModels,
+      });
+      setFeedback({
+        tone: 'success',
+        message: verifyResult.message,
+      });
+    } else {
+      setFeedback({
+        tone: 'error',
+        message: verifyResult.message,
       });
     }
-    setStatusMessage(result.message);
   };
 
   const handleCopyCode = async () => {
@@ -142,16 +293,25 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
       departmentName: deptInput.trim() || '은혜교회 청년부',
       authorName: authorInput.trim() || '김송연',
     });
-    setStatusMessage('✅ 부서 정보 및 구글 시트 URL 설정이 저장되었습니다.');
+    setFeedback({
+      tone: 'success',
+      message: '✅ 부서 정보 및 구글 시트 웹 앱 URL 설정이 저장되었습니다.',
+    });
   };
 
   const handlePush = async () => {
     if (!urlInput.trim()) {
-      setStatusMessage('먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.');
+      setFeedback({
+        tone: 'error',
+        message: '먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.',
+      });
       return;
     }
     setIsBusy(true);
-    setStatusMessage('구글 시트 및 드라이브로 데이터를 업로드하는 중...');
+    setFeedback({
+      tone: 'info',
+      message: '구글 시트 및 드라이브로 데이터를 업로드하는 중...',
+    });
     try {
       onSaveSettings({
         ...settings,
@@ -160,15 +320,17 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         authorName: authorInput.trim() || '김송연',
       });
       await onPushAllToGas(urlInput.trim());
-      setStatusMessage(
-        '✅ 구글 시트 & 드라이브 동기화 업로드가 완료되었습니다.'
-      );
+      setFeedback({
+        tone: 'success',
+        message: '✅ 구글 시트 & 드라이브 동기화 업로드가 완료되었습니다.',
+      });
     } catch (e) {
-      setStatusMessage(
-        `⚠️ 동기화 실패: ${
+      setFeedback({
+        tone: 'error',
+        message: `동기화 실패: ${
           e instanceof Error ? e.message : 'URL 및 배포 권한을 확인하세요.'
-        }`
-      );
+        }`,
+      });
     } finally {
       setIsBusy(false);
     }
@@ -176,37 +338,49 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
 
   const handlePull = async () => {
     if (!urlInput.trim()) {
-      setStatusMessage('먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.');
+      setFeedback({
+        tone: 'error',
+        message: '먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.',
+      });
       return;
     }
     setIsBusy(true);
-    setStatusMessage('구글 시트에서 데이터를 불러오는 중...');
+    setFeedback({
+      tone: 'info',
+      message: '구글 시트에서 데이터를 불러오는 중...',
+    });
     try {
       onSaveSettings({
         ...settings,
         gasWebAppUrl: urlInput.trim(),
       });
       await onPullFromGas(urlInput.trim());
-      setStatusMessage(
-        '✅ 구글 시트에서 최신 데이터를 성공적으로 불러왔습니다.'
-      );
+      setFeedback({
+        tone: 'success',
+        message: '✅ 구글 시트에서 최신 데이터를 성공적으로 불러왔습니다.',
+      });
     } catch (e) {
-      setStatusMessage(
-        `⚠️ 불러오기 실패: ${
+      setFeedback({
+        tone: 'error',
+        message: `불러오기 실패: ${
           e instanceof Error ? e.message : 'URL 및 배포 권한을 확인하세요.'
-        }`
-      );
+        }`,
+      });
     } finally {
       setIsBusy(false);
     }
   };
+
+  const isPinnedModel =
+    Boolean(settings.geminiApiKey?.trim()) &&
+    settings.geminiModel === geminiModelInput;
 
   return (
     <TdsDialog
       open={open}
       onClose={onClose}
       title="AI 영수증 스캐너 & 구글 시트 연동 설정"
-      subtitle="Gemini AI 자동 입력과 청년부 구글 계정 데이터베이스 연동을 관리합니다"
+      subtitle="내 API 키에서 사용 가능한 최신 Gemini 모델을 불러와 선택·고정하고 시트 동기화를 관리합니다"
       variant="modal"
     >
       <div className="space-y-5">
@@ -223,7 +397,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
               type="button"
               onClick={() => {
                 setActiveTab(tab.id as SettingsTabType);
-                setStatusMessage('');
+                setFeedback(null);
               }}
               className={`py-2.5 px-2 rounded-xl text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.97] ${
                 activeTab === tab.id
@@ -236,8 +410,32 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
           ))}
         </div>
 
+        {/* 상단 고정 피드백 배너 (성공 / 실패 / 진행 중 상태가 사라지지 않고 명확히 표시됨) */}
+        {feedback && (
+          <div
+            className={`px-4 py-3.5 rounded-2xl text-[13px] font-semibold flex items-start gap-2.5 ${
+              feedback.tone === 'error'
+                ? 'bg-[#FFEEF0] text-[#F04452]'
+                : feedback.tone === 'success'
+                  ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                  : 'bg-[#F9FAFB] text-[#4E5968]'
+            }`}
+          >
+            {feedback.tone === 'error' ? (
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : feedback.tone === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin text-[#3182F6]" />
+            )}
+            <span className="leading-snug break-words [word-break:keep-all]">
+              {feedback.message}
+            </span>
+          </div>
+        )}
+
         {/* =================================================================
-            탭 1: Gemini AI 영수증 자동 판독기 연결
+            탭 1: Gemini AI 영수증 자동 판독기 연결 (가용 모델 실시간 조회 + 선택 고정)
            ================================================================= */}
         {activeTab === 'gemini' && (
           <div className="space-y-4">
@@ -246,10 +444,10 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 <div>
                   <div className="flex items-center gap-1.5 text-[15px] font-bold text-[#191F28]">
                     <Sparkles className="w-4 h-4 text-[#3182F6]" />
-                    <span>사용자 Gemini 계정(API Key) 연결</span>
+                    <span>Gemini API 키 연결 & 가용 모델 선택·고정</span>
                   </div>
                   <p className="text-[12.5px] text-[#4E5968] mt-0.5">
-                    연결 후 영수증 사진을 찍거나 올리면 가맹점·금액·거래일·품목별 산출근거·추천 카테고리를 AI가 자동으로 채워줍니다.
+                    1단계로 내 API 키에서 사용 가능한 모델 목록을 불러온 뒤, 원하는 모델을 선택해 고정하세요.
                   </p>
                 </div>
 
@@ -260,23 +458,55 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   className="px-3.5 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
-                  Google AI Studio 무료 키 발급
+                  Google AI Studio 키 발급
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
 
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[12.5px] font-semibold text-[#4E5968] mb-1">
-                    Gemini API Key (내 기기 브라우저에만 안전하게 저장됨)
-                  </label>
-                  <div className="relative">
+              {/* 현재 고정된 상태 배지 */}
+              {settings.geminiApiKey && (
+                <div className="bg-[#FFFFFF] rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-[12.5px]">
+                    <span className="px-2 py-0.5 rounded-md bg-[#E8F3FF] text-[#1B64DA] font-bold">
+                      현재 고정 모델
+                    </span>
+                    <span className="font-mono font-bold text-[#191F28]">
+                      {settings.geminiModel}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGeminiKeyInput('');
+                      onSaveSettings({
+                        ...settings,
+                        geminiApiKey: '',
+                      });
+                      setFeedback({
+                        tone: 'info',
+                        message: '저장된 Gemini API 키가 삭제되었습니다.',
+                      });
+                    }}
+                    className="text-[12px] font-semibold text-[#F04452] hover:underline"
+                  >
+                    API 키 연결 해제
+                  </button>
+                </div>
+              )}
+
+              {/* Step 1: API 키 입력 및 모델 목록 실시간 조회 */}
+              <div className="space-y-2">
+                <label className="block text-[12.5px] font-bold text-[#191F28]">
+                  Step 1 · Gemini API Key 입력 후 사용 가능 모델 불러오기
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
                     <input
                       type={showApiKey ? 'text' : 'password'}
                       value={geminiKeyInput}
                       onChange={(e) => setGeminiKeyInput(e.target.value)}
                       placeholder="AIzaSy... 로 시작하는 Gemini API 키 붙여넣기"
-                      className="w-full h-11 pl-3.5 pr-10 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none font-mono"
+                      className="w-full h-11 pl-3.5 pr-10 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6] font-mono"
                     />
                     <button
                       type="button"
@@ -290,76 +520,138 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                       )}
                     </button>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-[12.5px] font-semibold text-[#4E5968] mb-1">
-                    사용할 Gemini 비전 모델
-                  </label>
-                  <select
-                    value={geminiModelInput}
-                    onChange={(e) => setGeminiModelInput(e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] font-medium text-[#191F28] focus:outline-none"
-                  >
-                    <option value="gemini-2.5-flash">
-                      gemini-2.5-flash (권장 · 가장 빠르고 무료 할당량 넉넉함)
-                    </option>
-                    <option value="gemini-2.5-pro">
-                      gemini-2.5-pro (고성능 · 복잡한 다품목 마트 영수증 정밀 판독)
-                    </option>
-                    <option value="gemini-2.0-flash">
-                      gemini-2.0-flash (호환용 경량 모델)
-                    </option>
-                  </select>
-                </div>
-
-                <div className="pt-1 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    disabled={isBusy}
-                    onClick={handleTestAndSaveGemini}
-                    className="px-5 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+                    disabled={isFetchingModels || isTestingModel}
+                    onClick={handleFetchAvailableModels}
+                    className="h-11 px-4 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150 disabled:opacity-50"
                   >
-                    {isBusy ? (
+                    {isFetchingModels ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
-                      <Sparkles className="w-4 h-4" />
+                      <RefreshCw className="w-4 h-4" />
                     )}
-                    연결 테스트 및 저장하기
+                    <span>1. 사용 가능 모델 불러오기</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Step 2: 읽어온 모델 목록 중에서 선택 및 고정 */}
+              <div className="space-y-2.5 pt-2 border-t border-[#E5E8EB]">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[12.5px] font-bold text-[#191F28]">
+                    Step 2 · 사용할 Gemini 모델 선택 및 고정 (
+                    {hasFetchedLiveModels
+                      ? `내 API 키 가용 모델 ${availableModels.length}개 조회됨`
+                      : '기본 추천 목록'}
+                    )
+                  </label>
+                  {hasFetchedLiveModels && (
+                    <span className="px-2 py-0.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold">
+                      실시간 조회 완료
+                    </span>
+                  )}
+                </div>
+
+                {/* 드롭다운 선택기 (전체 모델 빠른 탐색용) */}
+                <select
+                  value={geminiModelInput}
+                  onChange={(e) => setGeminiModelInput(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                >
+                  {availableModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayName}
+                    </option>
+                  ))}
+                </select>
+
+                {/* 상위 가용 모델 원터치 선택 카드 리스트 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[210px] overflow-y-auto pr-0.5">
+                  {availableModels.map((m, idx) => {
+                    const selected = geminiModelInput === m.id;
+                    const pinned =
+                      Boolean(settings.geminiApiKey?.trim()) &&
+                      settings.geminiModel === m.id;
+
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setGeminiModelInput(m.id)}
+                        className={`p-3 rounded-xl text-left transition-all duration-150 flex items-start justify-between gap-2 ${
+                          selected
+                            ? 'bg-[#3182F6] text-[#FFFFFF]'
+                            : 'bg-[#FFFFFF] text-[#191F28] hover:bg-[#E5E8EB]/60'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[12.5px] font-bold font-mono truncate">
+                              {m.id}
+                            </span>
+                            {idx === 0 && (
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                                  selected
+                                    ? 'bg-[#FFFFFF]/20 text-[#FFFFFF]'
+                                    : 'bg-[#E8F3FF] text-[#1B64DA]'
+                                }`}
+                              >
+                                추천
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className={`text-[11px] truncate mt-0.5 ${
+                              selected ? 'text-[#FFFFFF]/85' : 'text-[#8B95A1]'
+                            }`}
+                          >
+                            {m.displayName}
+                          </div>
+                        </div>
+
+                        {pinned && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                              selected
+                                ? 'bg-[#FFFFFF] text-[#3182F6]'
+                                : 'bg-[#191F28] text-[#FFFFFF]'
+                            }`}
+                          >
+                            고정됨
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    disabled={isTestingModel || isFetchingModels}
+                    onClick={handleVerifyAndPinModel}
+                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 disabled:opacity-50"
+                  >
+                    {isTestingModel ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Pin className="w-4 h-4" />
+                    )}
+                    <span>
+                      2. [{geminiModelInput}] 모델 검증 및 고정 저장하기
+                    </span>
                   </button>
 
-                  {settings.geminiApiKey && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGeminiKeyInput('');
-                        onSaveSettings({ ...settings, geminiApiKey: '' });
-                        setStatusMessage('API 키가 삭제되었습니다.');
-                      }}
-                      className="px-3.5 py-2.5 rounded-xl bg-[#FFEEF0] text-[#F04452] text-[12.5px] font-semibold active:scale-[0.97] transition-all duration-150"
-                    >
-                      키 삭제
-                    </button>
+                  {isPinnedModel && (
+                    <span className="text-[12px] font-bold text-[#1B64DA] flex items-center gap-1">
+                      <CheckCircle2 className="w-4 h-4" />이 모델로 고정되어 작동 중입니다
+                    </span>
                   )}
                 </div>
               </div>
-            </div>
-
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-2 text-[12.5px] text-[#4E5968]">
-              <div className="font-bold text-[#191F28]">
-                💡 10초 만에 무료 Gemini API 키 연결하는 법
-              </div>
-              <ol className="list-decimal list-inside space-y-1.5 leading-relaxed">
-                <li>
-                  위 파란색 <strong>[Google AI Studio 무료 키 발급]</strong> 버튼을 눌러 본인 구글 계정으로 로그인합니다.
-                </li>
-                <li>
-                  우측 상단 <strong>[Create API key]</strong> 버튼을 눌러 생성된 키(`AIzaSy...`)를 복사합니다.
-                </li>
-                <li>
-                  위 입력창에 붙여넣고 <strong>[연결 테스트 및 저장하기]</strong>를 누르면 즉시 영수증 자동 기장이 활성화됩니다!
-                </li>
-              </ol>
             </div>
           </div>
         )}
@@ -534,9 +826,11 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   type="button"
                   onClick={() => {
                     onStartCleanLedger(parseDigits(carryoverStr));
-                    setStatusMessage(
-                      '🚀 샘플 내역을 비우고 실제 장부 모드로 전환되었습니다!'
-                    );
+                    setFeedback({
+                      tone: 'success',
+                      message:
+                        '🚀 샘플 내역을 비우고 실제 장부 모드로 전환되었습니다!',
+                    });
                   }}
                   className="px-4 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold shrink-0 active:scale-[0.97] transition-all duration-150"
                 >
@@ -582,9 +876,11 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     const file = e.target.files?.[0];
                     if (file) {
                       onImportJson(file);
-                      setStatusMessage(
-                        '✅ JSON 백업 파일이 성공적으로 복원되었습니다.'
-                      );
+                      setFeedback({
+                        tone: 'success',
+                        message:
+                          '✅ JSON 백업 파일이 성공적으로 복원되었습니다.',
+                      });
                       e.target.value = '';
                     }
                   }}
@@ -622,7 +918,10 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 type="button"
                 onClick={() => {
                   onResetSampleData();
-                  setStatusMessage('데모 샘플 데이터가 복원되었습니다.');
+                  setFeedback({
+                    tone: 'info',
+                    message: '데모 샘플 데이터가 복원되었습니다.',
+                  });
                 }}
                 className="px-4 py-2.5 rounded-xl bg-[#E5E8EB] text-[#4E5968] text-[12.5px] font-bold flex items-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
               >
@@ -630,13 +929,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 샘플 불러오기
               </button>
             </div>
-          </div>
-        )}
-
-        {statusMessage && (
-          <div className="px-4 py-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-2">
-            <Database className="w-4 h-4 shrink-0" />
-            <span>{statusMessage}</span>
           </div>
         )}
       </div>
