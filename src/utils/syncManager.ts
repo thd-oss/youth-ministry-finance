@@ -335,7 +335,8 @@ export const SyncManager = {
       '일자',
       '구분',
       '회계계정',
-      '관/항(카테고리)',
+      '관/항(1차 사역·수입원)',
+      '세목(2차 품목·명목)',
       '귀속목장',
       '목장지출구분',
       '적요(내역명)',
@@ -367,6 +368,7 @@ export const SyncManager = {
       tx.type === 'income' ? '수입' : '지출',
       accountMap[tx.account] || tx.account,
       tx.category,
+      tx.subCategory || '-',
       tx.mokjangId ? mokjangMap.get(tx.mokjangId) || tx.mokjangId : '-',
       tx.mokjangSubType ? MOKJANG_SUBTYPE_LABELS[tx.mokjangSubType] : '-',
       tx.title,
@@ -437,13 +439,20 @@ export function deriveDynamicFiscalSchema(
   transactions: Transaction[]
 ): DynamicFiscalSchema {
   const categoryAllocations: Record<string, CategoryBudgetAllocation> = {};
-  const budgetCategories: string[] = [];
+  const budgetExpenseCategories: string[] = [];
+  const budgetIncomeCategories: string[] = [];
 
   annualBudget.items.forEach((item) => {
     const cat = item.category.trim();
     if (!cat) return;
+    if (item.entryType === 'income') {
+      if (!budgetIncomeCategories.includes(cat)) {
+        budgetIncomeCategories.push(cat);
+      }
+      return;
+    }
     if (!categoryAllocations[cat]) {
-      budgetCategories.push(cat);
+      budgetExpenseCategories.push(cat);
       categoryAllocations[cat] = {
         category: cat,
         annualBudget: 0,
@@ -455,6 +464,9 @@ export function deriveDynamicFiscalSchema(
     categoryAllocations[cat].monthlyBudget = Math.round(
       categoryAllocations[cat].annualBudget / 12
     );
+    if (item.subCategory?.trim()) {
+      categoryAllocations[cat].itemNames.push(item.subCategory.trim());
+    }
     if (item.itemName.trim()) {
       categoryAllocations[cat].itemNames.push(item.itemName.trim());
     }
@@ -470,8 +482,8 @@ export function deriveDynamicFiscalSchema(
     .map((tx) => tx.category.trim());
 
   const baseExpenseList = settings.syncCategoriesWithAnnualBudget
-    ? budgetCategories.length > 0
-      ? budgetCategories
+    ? budgetExpenseCategories.length > 0
+      ? budgetExpenseCategories
       : EXPENSE_CATEGORIES
     : EXPENSE_CATEGORIES;
 
@@ -485,6 +497,7 @@ export function deriveDynamicFiscalSchema(
 
   const activeIncomeCategories = Array.from(
     new Set([
+      ...budgetIncomeCategories,
       ...INCOME_CATEGORIES,
       ...(settings.customIncomeCategories || []),
       ...usedIncomeCategories,

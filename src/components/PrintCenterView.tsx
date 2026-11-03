@@ -701,6 +701,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                           </span>
                           <span className="px-2 py-0.5 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold">
                             {tx.category}
+                            {tx.subCategory ? ` › ${tx.subCategory}` : ''}
                           </span>
                           {mj && (
                             <span className="px-2 py-0.5 rounded-lg bg-[#F9FAFB] text-[#4E5968] text-[11px] font-semibold">
@@ -1003,8 +1004,8 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                         <th className="border border-[#191F28] py-1.5 px-1 w-[36px]">
                           구분
                         </th>
-                        <th className="border border-[#191F28] py-1.5 px-1.5 w-[88px]">
-                          관/항(카테고리)
+                        <th className="border border-[#191F28] py-1.5 px-1.5 w-[94px]">
+                          관/항 · 세목
                         </th>
                         <th className="border border-[#191F28] py-1.5 px-2 text-left">
                           적요 (내역 및 산출근거)
@@ -1047,7 +1048,14 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                             <td
                               className={`border border-[#E5E8EB] text-center text-[#4E5968] align-middle whitespace-pre-wrap break-words [word-break:keep-all] ${tableRowPaddingClass}`}
                             >
-                              {tx.category}
+                              <div className="font-semibold text-[#191F28]">
+                                {tx.category}
+                              </div>
+                              {tx.subCategory && (
+                                <div className="text-[9.5px] text-[#4E5968] leading-tight mt-0.5">
+                                  ({tx.subCategory})
+                                </div>
+                              )}
                             </td>
                             <td
                               className={`border border-[#E5E8EB] align-top whitespace-pre-wrap break-words [word-break:keep-all] ${tableRowPaddingClass}`}
@@ -1249,8 +1257,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                               </span>
 
                               <span className="text-[10.5px] font-semibold text-[#191F28] flex-1 text-center whitespace-pre-wrap break-words [word-break:keep-all] leading-snug">
-                                {formatShortDate(tx.date)} | {tx.category} |{' '}
-                                {tx.title}
+                                {formatShortDate(tx.date)} | {tx.category}
+                                {tx.subCategory
+                                  ? ` › ${tx.subCategory}`
+                                  : ''}{' '}
+                                | {tx.title}
                               </span>
 
                               <span className="text-[11.5px] font-bold text-[#191F28] shrink-0 mt-0.5">

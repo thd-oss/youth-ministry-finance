@@ -19,6 +19,7 @@ import {
   MOKJANG_SUBTYPE_LABELS,
   MokjangGroup,
   ProcessedTransaction,
+  TransactionType,
 } from '../types/finance';
 import {
   formatDateHeader,
@@ -42,7 +43,10 @@ interface LedgerViewProps {
   categoryAllocations: Record<string, CategoryBudgetAllocation>;
   isProductionMode: boolean;
   hasGeminiKey: boolean;
-  onOpenNewTransaction: (autoTriggerCamera?: boolean) => void;
+  onOpenNewTransaction: (
+    autoTriggerCamera?: boolean,
+    initialType?: TransactionType
+  ) => void;
   onSelectTransaction: (tx: ProcessedTransaction) => void;
   onExportCsv: () => void;
   onSwitchToPrintCenter: () => void;
@@ -104,12 +108,16 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         const matchTitle = tx.title.toLowerCase().includes(q);
         const matchMemo = tx.memo.toLowerCase().includes(q);
         const matchCategory = tx.category.toLowerCase().includes(q);
+        const matchSubCategory = (tx.subCategory || '')
+          .toLowerCase()
+          .includes(q);
         const matchEvidence = (tx.evidenceNo || '').toLowerCase().includes(q);
         const matchMokjang = mjName.includes(q);
         if (
           !matchTitle &&
           !matchMemo &&
           !matchCategory &&
+          !matchSubCategory &&
           !matchEvidence &&
           !matchMokjang
         ) {
@@ -285,24 +293,33 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </div>
         </div>
 
-        {/* 하단 원스톱 액션 버튼 2종: [📸 영수증 찍어서 AI 자동 기장] + [+ 수기 내역 등록] */}
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        {/* 하단 원스톱 액션 버튼 3종: [📸 영수증 AI 지출 기장] + [➖ 직접 지출 입력] + [➕ 수입 내역 등록] */}
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-12 gap-2.5">
           <button
             type="button"
-            onClick={() => onOpenNewTransaction(true)}
-            className="sm:col-span-2 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
+            onClick={() => onOpenNewTransaction(true, 'expense')}
+            className="sm:col-span-6 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Camera className="w-5 h-5" />
-            <span>📸 영수증 찍어서 AI 자동 기장</span>
+            <span>📸 영수증 찍어서 AI 지출 기장</span>
           </button>
 
           <button
             type="button"
-            onClick={() => onOpenNewTransaction(false)}
-            className="h-13 px-4 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[15px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+            onClick={() => onOpenNewTransaction(false, 'expense')}
+            className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#191F28] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Plus className="w-4 h-4" />
-            <span>직접 내역 입력</span>
+            <span>➖ 직접 지출 입력</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenNewTransaction(false, 'income')}
+            className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+          >
+            <Plus className="w-4 h-4" />
+            <span>➕ 수입 내역 등록</span>
           </button>
         </div>
       </section>
@@ -550,7 +567,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                             </div>
 
                             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] font-normal text-[#8B95A1] tabular-nums">
-                              <span>{tx.category}</span>
+                              <span className="font-semibold text-[#4E5968]">
+                                {tx.category}
+                              </span>
+                              {tx.subCategory && (
+                                <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#191F28] text-[11.5px] font-semibold">
+                                  › {tx.subCategory}
+                                </span>
+                              )}
                               <span>·</span>
                               <span>{tx.paymentMethod}</span>
 

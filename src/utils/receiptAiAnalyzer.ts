@@ -1,4 +1,5 @@
 import {
+  COMMON_EXPENSE_SUBCATEGORIES,
   GeminiModelOption,
   LedgerAccount,
   MokjangExpenseSubType,
@@ -13,6 +14,7 @@ export interface ReceiptAiAnalysisResult {
   title: string;
   memo: string;
   category: string;
+  subCategory: string;
   paymentMethod: PaymentMethod;
   account: LedgerAccount;
   mokjangId?: string;
@@ -319,12 +321,13 @@ export async function analyzeReceiptWithGemini(params: {
 3. storeName: 영수증 상의 가맹점명(상호명).
 4. title: 회계 장부 '적요' 칸에 들어갈 깔끔한 제목. 형식: "가맹점명 (핵심 구매목적/품목 요약)" (예: "김밥천국 역삼본점 (주일 소그룹 간식)", "교보문고 강남점 (리더 양육 도서)").
 5. memo: 회계 감사 및 결산 보고서용 '상세 산출근거 메모'. 영수증에 적힌 품목명, 단가, 수량을 파악하여 "품목명 단가원×수량개" 형태로 한눈에 보이게 작성하세요 (예: "야채김밥 3,500원×20줄", "아메리카노 4,500원×6잔"). 세부 품목이 안 보이면 총액 기준으로 작성하세요.
-6. category: 반드시 다음 활성 관/항 카테고리 목록 중에서 가장 적합한 하나를 골라 정확히 동일한 문자열로 반환하세요: [${categoryListStr}].
-7. paymentMethod: 영수증 결제수단을 판별하여 ['체크카드', '계좌이체', '현금', '개인선결제(청구)'] 중 하나로 반환하세요. 카드 전표면 '체크카드'를 기본으로 선택하세요.
-8. account: 일반 운영/간식/심방/예배/비품이면 'general', 수련회/캠프/행사 관련이면 'retreat', 선교/목적헌금 관련이면 'mission'으로 반환하세요.
-9. mokjangId: 영수증 메모나 품목에 특정 목장(${mokjangListStr})이 명시되어 있을 때만 해당 목장 id(예: 'mj-1')를 반환하고, 없으면 빈 문자열("")로 반환하세요.
-10. mokjangSubType: 심방/선물/병문안/축하 성격이면 'visitation', 식사/다과/카페/모임 성격이면 'fellowship'으로 반환하세요.
-11. summaryComment: 사용자에게 보여줄 1줄 완료 브리핑 (예: "김밥천국 70,000원 · 품목 산출근거 추출 완료").`;
+6. category: 반드시 다음 1차 관/항(사역 목적) 목록 중에서 가장 적합한 하나를 골라 정확히 동일한 문자열로 반환하세요: [${categoryListStr}].
+7. subCategory: 지출 성질/품목(2차 세목)을 다음 목록 중에서 가장 알맞은 하나로 반환하세요: [${COMMON_EXPENSE_SUBCATEGORIES.join(', ')}]. (예: 식당·카페·간식이면 '식비·간식/다과', 서점이면 '교재·도서·양육물품', 인쇄소면 '주보·인쇄·홍보물').
+8. paymentMethod: 영수증 결제수단을 판별하여 ['체크카드', '계좌이체', '현금', '개인선결제(청구)'] 중 하나로 반환하세요. 카드 전표면 '체크카드'를 기본으로 선택하세요.
+9. account: 일반 운영/간식/심방/예배/비품이면 'general', 수련회/캠프/행사 관련이면 'retreat', 선교/목적헌금 관련이면 'mission'으로 반환하세요.
+10. mokjangId: 영수증 메모나 품목에 특정 목장(${mokjangListStr})이 명시되어 있을 때만 해당 목장 id(예: 'mj-1')를 반환하고, 없으면 빈 문자열("")로 반환하세요.
+11. mokjangSubType: 심방/선물/병문안/축하 성격이면 'visitation', 식사/다과/카페/모임 성격이면 'fellowship'으로 반환하세요.
+12. summaryComment: 사용자에게 보여줄 1줄 완료 브리핑 (예: "김밥천국 70,000원 · 품목 산출근거 추출 완료").`;
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     targetModel
@@ -361,6 +364,7 @@ export async function analyzeReceiptWithGemini(params: {
             title: { type: 'STRING' },
             memo: { type: 'STRING' },
             category: { type: 'STRING' },
+            subCategory: { type: 'STRING' },
             paymentMethod: {
               type: 'STRING',
               enum: ['체크카드', '계좌이체', '현금', '개인선결제(청구)'],
@@ -447,6 +451,7 @@ export async function analyzeReceiptWithGemini(params: {
     title: parsed.title || parsed.storeName || '지출 내역',
     memo: parsed.memo || '',
     category: matchedCategory,
+    subCategory: parsed.subCategory || '식비·간식/다과',
     paymentMethod: parsed.paymentMethod || '체크카드',
     account: parsed.account || 'general',
     mokjangId: parsed.mokjangId || undefined,

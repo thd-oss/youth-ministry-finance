@@ -21,6 +21,9 @@ import {
   BudgetDocument,
   BudgetLineItem,
   BudgetTemplateType,
+  COMMON_EXPENSE_SUBCATEGORIES,
+  COMMON_INCOME_SUBCATEGORIES,
+  TransactionType,
 } from '../types/finance';
 import {
   formatNumber,
@@ -44,6 +47,7 @@ interface BudgetBuilderViewProps {
   settings: AppSettings;
   onUpdateSettings: (next: AppSettings) => void;
   activeExpenseCategories: string[];
+  activeIncomeCategories?: string[];
   initialTemplate?: BudgetTemplateType;
 }
 
@@ -55,6 +59,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   settings,
   onUpdateSettings,
   activeExpenseCategories,
+  activeIncomeCategories = [],
   initialTemplate = 'annual_budget',
 }) => {
   const [activeTemplate, setActiveTemplate] =
@@ -71,8 +76,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   const [a4ZoomMode, setA4ZoomMode] = useState<'fit' | 'actual'>('fit');
   const [isOverviewExpanded, setIsOverviewExpanded] = useState<boolean>(false);
 
-  // 새 예산 항목 직접 작성기(Composer) 상태
+  // 새 예산 항목 직접 작성기(Composer) 상태 (수입/지출 구분 + 1차 관/항 + 2차 세목 지원)
+  const [draftEntryType, setDraftEntryType] =
+    useState<TransactionType>('expense');
   const [draftCategory, setDraftCategory] = useState<string>('');
+  const [draftSubCategory, setDraftSubCategory] = useState<string>('');
   const [draftItemName, setDraftItemName] = useState<string>('');
   const [draftUnitPriceStr, setDraftUnitPriceStr] = useState<string>('');
   const [draftQtyStr, setDraftQtyStr] = useState<string>('');
@@ -100,10 +108,20 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   // 현재 문서 내 고유 카테고리 + 활성 카테고리 (빠른 선택 칩 제공용)
   const suggestedCategories = Array.from(
     new Set([
-      ...doc.items.map((item) => item.category.trim()).filter(Boolean),
-      ...activeExpenseCategories,
+      ...doc.items
+        .filter((item) => (item.entryType || 'expense') === draftEntryType)
+        .map((item) => item.category.trim())
+        .filter(Boolean),
+      ...(draftEntryType === 'income'
+        ? activeIncomeCategories
+        : activeExpenseCategories),
     ])
   ).slice(0, 12);
+
+  const suggestedSubCategories =
+    draftEntryType === 'income'
+      ? COMMON_INCOME_SUBCATEGORIES
+      : COMMON_EXPENSE_SUBCATEGORIES;
 
   const parseDigits = (raw: string): number => {
     const digits = raw.replace(/[^0-9]/g, '');
@@ -139,7 +157,12 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     e.preventDefault();
     const cleanCategory =
       draftCategory.trim() ||
-      (activeTemplate === 'annual_budget' ? '일반사역비' : '프로그램/기타');
+      (draftEntryType === 'income'
+        ? '교회지원금(예산)'
+        : activeTemplate === 'annual_budget'
+          ? '일반사역비'
+          : '프로그램/기타');
+    const cleanSubCategory = draftSubCategory.trim() || undefined;
     const cleanItemName = draftItemName.trim();
     const numericAmount = parseDigits(draftAmountStr);
 
@@ -150,7 +173,9 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 
     const newItem: BudgetLineItem = {
       id: `bg-${Date.now()}`,
+      entryType: draftEntryType,
       category: cleanCategory,
+      subCategory: cleanSubCategory,
       itemName: cleanItemName,
       formula:
         draftFormula.trim() ||
@@ -164,7 +189,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       items: [...doc.items, newItem],
     });
 
-    // 작성 폼 초기화 (연속 입력이 편하도록 구분 카테고리는 유지 가능하나 깔끔히 비움)
+    // 작성 폼 초기화
+    setDraftSubCategory('');
     setDraftItemName('');
     setDraftUnitPriceStr('');
     setDraftQtyStr('');
@@ -173,7 +199,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     setDraftAmountStr('');
     setDraftNote('');
     setComposerFeedback(
-      `✅ [${cleanCategory}] "${cleanItemName}" (${formatWon(numericAmount)}) 항목이 추가되었습니다.`
+      `✅ [${draftEntryType === 'income' ? '수입' : '지출'} · ${cleanCategory}${cleanSubCategory ? ` › ${cleanSubCategory}` : ''}] "${cleanItemName}" (${formatWon(numericAmount)}) 항목이 추가되었습니다.`
     );
     setTimeout(() => setComposerFeedback(''), 3000);
   };
@@ -537,23 +563,82 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
 
             <form onSubmit={handleCreateItemFromComposer} className="space-y-3.5">
-              {/* 1행: 구분(관/항) + 세부 항목명 */}
+              {/* 지출 예산 항목 vs 수입·재원 항목 선택 토글 */}
+              <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftEntryType('expense');
+                    setDraftCategory('');
+                    setDraftSubCategory('');
+                  }}
+                  className={`py-2 px-3 rounded-xl text-[13px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                    draftEntryType === 'expense'
+                      ? 'bg-[#FFFFFF] text-[#191F28]'
+                      : 'text-[#8B95A1] hover:text-[#4E5968]'
+                  }`}
+                >
+                  ➖ 지출 예산 항목 (사역 목적 + 지출 세목)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftEntryType('income');
+                    setDraftCategory('');
+                    setDraftSubCategory('');
+                  }}
+                  className={`py-2 px-3 rounded-xl text-[13px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                    draftEntryType === 'income'
+                      ? 'bg-[#3182F6] text-[#FFFFFF]'
+                      : 'text-[#8B95A1] hover:text-[#4E5968]'
+                  }`}
+                >
+                  ➕ 수입·재원 항목 (수입원 + 세부 명목)
+                </button>
+              </div>
+
+              {/* 1행: 1차 관/항 + 2차 세목 + 세부 항목명 */}
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                <div className="sm:col-span-4">
+                <div className="sm:col-span-3">
                   <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    구분 (관/항 카테고리)
+                    {draftEntryType === 'income'
+                      ? '1차 관/항 (수입원)'
+                      : '1차 관/항 (사역 목적)'}
                   </label>
                   <input
                     ref={composerCategoryRef}
                     type="text"
                     value={draftCategory}
                     onChange={(e) => setDraftCategory(e.target.value)}
-                    placeholder="예: 간식/다과비, 예배/양육비, 새가족비"
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#1B64DA] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    placeholder={
+                      draftEntryType === 'income'
+                        ? '예: 교회지원금(예산), 부서회비'
+                        : '예: 예배/양육비, 수련회/행사비'
+                    }
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] font-bold text-[#1B64DA] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                   />
                 </div>
 
-                <div className="sm:col-span-8">
+                <div className="sm:col-span-3">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    {draftEntryType === 'income'
+                      ? '2차 세목 (수입 명목)'
+                      : '2차 세목 (지출 품목)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={draftSubCategory}
+                    onChange={(e) => setDraftSubCategory(e.target.value)}
+                    placeholder={
+                      draftEntryType === 'income'
+                        ? '예: 월 정기예산 수령'
+                        : '예: 식비·간식/다과, 교재·도서'
+                    }
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+                </div>
+
+                <div className="sm:col-span-6">
                   <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
                     세부 예산 항목명 (필수)
                   </label>
@@ -561,34 +646,60 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                     type="text"
                     value={draftItemName}
                     onChange={(e) => setDraftItemName(e.target.value)}
-                    placeholder="예: 주일 소그룹 목장 모임 다과 및 식비 지원"
+                    placeholder={
+                      draftEntryType === 'income'
+                        ? '예: 교회 교육부서 정기 지원금 / 수련회 참가자 등록비'
+                        : '예: 리더십 훈련 다과비 / 주일 소그룹 목장 모임 식비'
+                    }
                     className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                   />
                 </div>
               </div>
 
-              {/* 빠른 구분(관/항) 칩 선택 */}
-              {suggestedCategories.length > 0 && (
+              {/* 빠른 1차 관/항 & 2차 세목 칩 선택 */}
+              <div className="space-y-1.5">
+                {suggestedCategories.length > 0 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                    <span className="text-[11px] font-semibold text-[#8B95A1] shrink-0">
+                      1차 관/항 빠른 선택:
+                    </span>
+                    {suggestedCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setDraftCategory(cat)}
+                        className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
+                          draftCategory === cat
+                            ? 'bg-[#3182F6] text-[#FFFFFF]'
+                            : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                   <span className="text-[11px] font-semibold text-[#8B95A1] shrink-0">
-                    기존 관/항 선택:
+                    2차 세목 빠른 선택:
                   </span>
-                  {suggestedCategories.map((cat) => (
+                  {suggestedSubCategories.map((sub) => (
                     <button
-                      key={cat}
+                      key={sub}
                       type="button"
-                      onClick={() => setDraftCategory(cat)}
+                      onClick={() => setDraftSubCategory(sub)}
                       className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
-                        draftCategory === cat
-                          ? 'bg-[#3182F6] text-[#FFFFFF]'
-                          : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
+                        draftSubCategory === sub
+                          ? 'bg-[#191F28] text-[#FFFFFF]'
+                          : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
                       }`}
                     >
-                      {cat}
+                      {sub}
                     </button>
                   ))}
                 </div>
-              )}
+              </div>
 
               {/* 2행: 단가 × 수량/인원 × 횟수/개월 자동 계산기 */}
               <div className="bg-[#F9FAFB] rounded-2xl p-3.5 space-y-2.5">
@@ -973,21 +1084,52 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   key={item.id}
                   className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3.5"
                 >
-                  {/* 카드 상단 바: 번호 배지 + 구분(관/항) 입력 + 순서이동/삭제 */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                  {/* 카드 상단 바: 번호 배지 + 지출/수입 토글 + 1차 관/항 + 2차 세목 입력 + 순서이동/삭제 */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                       <span className="px-2.5 py-1 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold tabular-nums shrink-0">
                         #{String(idx + 1).padStart(2, '0')}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleItemChange(
+                            item.id,
+                            'entryType',
+                            item.entryType === 'income' ? 'expense' : 'income'
+                          )
+                        }
+                        className={`px-2.5 py-1 rounded-xl text-[12px] font-bold shrink-0 transition-all active:scale-[0.97] ${
+                          item.entryType === 'income'
+                            ? 'bg-[#3182F6] text-[#FFFFFF]'
+                            : 'bg-[#F2F4F6] text-[#4E5968]'
+                        }`}
+                      >
+                        {item.entryType === 'income' ? '➕ 수입' : '➖ 지출'}
+                      </button>
                       <input
                         type="text"
                         value={item.category}
                         onChange={(e) =>
                           handleItemChange(item.id, 'category', e.target.value)
                         }
-                        placeholder="구분(관/항) 입력"
-                        aria-label={`항목 ${idx + 1} 구분`}
-                        className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold w-full max-w-[200px] placeholder:text-[#1B64DA]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                        placeholder="1차 관/항 (예: 예배/양육비)"
+                        aria-label={`항목 ${idx + 1} 1차 관/항`}
+                        className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold w-full max-w-[165px] placeholder:text-[#1B64DA]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                      <input
+                        type="text"
+                        value={item.subCategory || ''}
+                        onChange={(e) =>
+                          handleItemChange(
+                            item.id,
+                            'subCategory',
+                            e.target.value
+                          )
+                        }
+                        placeholder="2차 세목 (예: 식비·간식/다과)"
+                        aria-label={`항목 ${idx + 1} 2차 세목`}
+                        className="h-9 px-3 rounded-xl bg-[#F9FAFB] text-[#191F28] text-[12.5px] font-semibold w-full max-w-[175px] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                       />
                     </div>
 

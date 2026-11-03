@@ -74,6 +74,8 @@ export const App: React.FC = () => {
   // 바텀시트 및 설정 모달 상태
   const [isTxSheetOpen, setIsTxSheetOpen] = useState<boolean>(false);
   const [autoTriggerCamera, setAutoTriggerCamera] = useState<boolean>(false);
+  const [defaultTxType, setDefaultTxType] =
+    useState<TransactionType>('expense');
   const [editingTx, setEditingTx] = useState<ProcessedTransaction | null>(null);
   const [presetMokjangId, setPresetMokjangId] = useState<string | undefined>(
     undefined
@@ -531,10 +533,14 @@ export const App: React.FC = () => {
             categoryAllocations={fiscalSchema.categoryAllocations}
             isProductionMode={settings.isProductionMode}
             hasGeminiKey={hasGeminiKey}
-            onOpenNewTransaction={(triggerCam = false) => {
+            onOpenNewTransaction={(
+              triggerCam = false,
+              initialType: TransactionType = 'expense'
+            ) => {
               setEditingTx(null);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setDefaultTxType(initialType);
               setAutoTriggerCamera(Boolean(triggerCam));
               setIsTxSheetOpen(true);
             }}
@@ -542,6 +548,7 @@ export const App: React.FC = () => {
               setEditingTx(tx);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setDefaultTxType(tx.type);
               setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
@@ -617,6 +624,7 @@ export const App: React.FC = () => {
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             activeExpenseCategories={fiscalSchema.activeExpenseCategories}
+            activeIncomeCategories={fiscalSchema.activeIncomeCategories}
           />
         )}
       </main>
@@ -634,6 +642,7 @@ export const App: React.FC = () => {
         initialTransaction={editingTx}
         defaultYearMonth={yearMonth}
         defaultAccount={accountFilter === 'all' ? 'general' : accountFilter}
+        defaultType={defaultTxType}
         presetMokjangId={presetMokjangId}
         presetMokjangSubType={presetMokjangSubType}
         autoTriggerCamera={autoTriggerCamera}
@@ -642,6 +651,7 @@ export const App: React.FC = () => {
         onOpenGeminiSettings={() => openSettingsAt('gemini')}
         incomeCategories={fiscalSchema.activeIncomeCategories}
         expenseCategories={fiscalSchema.activeExpenseCategories}
+        categoryAllocations={fiscalSchema.categoryAllocations}
         mokjangs={mokjangs}
         onAddCustomCategory={handleAddCustomCategory}
         onSave={handleSaveTransaction}
