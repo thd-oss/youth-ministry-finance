@@ -46,7 +46,11 @@ interface TransactionBottomSheetProps {
   incomeCategories: string[];
   expenseCategories: string[];
   mokjangs: MokjangGroup[];
-  onAddCustomCategory: (type: TransactionType, newCategory: string) => void;
+  onAddCustomCategory: (
+    type: TransactionType,
+    newCategory: string,
+    monthlyBudgetAmount?: number
+  ) => void;
   onSave: (tx: Transaction) => void;
   onDelete?: (id: string) => void;
 }
@@ -102,6 +106,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   const [previewScanMode, setPreviewScanMode] = useState<boolean>(false);
   const [isAddingCategory, setIsAddingCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
+  const [newCategoryMonthlyBudgetStr, setNewCategoryMonthlyBudgetStr] =
+    useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   useEffect(() => {
@@ -301,9 +307,15 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   const handleConfirmNewCategory = () => {
     const trimmed = newCategoryName.trim();
     if (!trimmed) return;
-    onAddCustomCategory(type, trimmed);
+    const monthlyBudget = parseRawAmount(newCategoryMonthlyBudgetStr);
+    onAddCustomCategory(
+      type,
+      trimmed,
+      type === 'expense' && monthlyBudget > 0 ? monthlyBudget : undefined
+    );
     setCategory(trimmed);
     setNewCategoryName('');
+    setNewCategoryMonthlyBudgetStr('');
     setIsAddingCategory(false);
   };
 
@@ -669,21 +681,48 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
 
           {isAddingCategory && (
-            <div className="mb-2.5 flex items-center gap-2">
-              <input
-                type="text"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                placeholder="새 관/항 카테고리명 입력 (예: 새가족정착비)"
-                className="flex-1 h-10 px-3.5 rounded-xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={handleConfirmNewCategory}
-                className="h-10 px-3.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold shrink-0"
-              >
-                추가
-              </button>
+            <div className="mb-3 p-3 rounded-2xl bg-[#F9FAFB] space-y-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  placeholder="새 관/항 카테고리명 (예: 새가족정착비)"
+                  className="flex-1 h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] focus:outline-none"
+                />
+                {type === 'expense' && (
+                  <div className="relative flex items-center sm:w-44">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newCategoryMonthlyBudgetStr}
+                      onChange={(e) => {
+                        const n = parseRawAmount(e.target.value);
+                        setNewCategoryMonthlyBudgetStr(
+                          n > 0 ? formatNumber(n) : ''
+                        );
+                      }}
+                      placeholder="월 배정예산(선택)"
+                      className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-bold text-[#3182F6] tabular-nums focus:outline-none"
+                    />
+                    <span className="absolute right-3 text-[12px] text-[#8B95A1] pointer-events-none">
+                      원
+                    </span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleConfirmNewCategory}
+                  className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold shrink-0"
+                >
+                  + 관/항 등록
+                </button>
+              </div>
+              {type === 'expense' && (
+                <div className="text-[11.5px] text-[#8B95A1]">
+                  💡 월 배정예산을 함께 입력하면 연간 예산안(×12개월) 항목으로도 자동 편성됩니다.
+                </div>
+              )}
             </div>
           )}
 

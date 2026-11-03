@@ -200,7 +200,8 @@ export const App: React.FC = () => {
 
   const handleAddCustomCategory = (
     type: TransactionType,
-    newCategory: string
+    newCategory: string,
+    monthlyBudgetAmount?: number
   ) => {
     if (type === 'income') {
       const nextCustom = Array.from(
@@ -216,6 +217,25 @@ export const App: React.FC = () => {
       const nextSettings = { ...settings, customExpenseCategories: nextCustom };
       setSettings(nextSettings);
       SyncManager.saveSettings(nextSettings);
+
+      if (monthlyBudgetAmount && monthlyBudgetAmount > 0) {
+        const annualAmount = monthlyBudgetAmount * 12;
+        const nextAnnualDoc: BudgetDocument = {
+          ...budgets.annual_budget,
+          items: [
+            ...budgets.annual_budget.items,
+            {
+              id: `ab-${Date.now()}`,
+              category: newCategory,
+              itemName: `${newCategory} 연간 편성 예산`,
+              formula: `월 ${monthlyBudgetAmount.toLocaleString('ko-KR')}원 × 12개월`,
+              amount: annualAmount,
+              note: '장부 내역 등록 시 직접 추가',
+            },
+          ],
+        };
+        handleUpdateBudget('annual_budget', nextAnnualDoc);
+      }
     }
   };
 
@@ -534,6 +554,7 @@ export const App: React.FC = () => {
             }
             onSwitchToPrintCenter={() => setActiveView('print_center')}
             onSwitchToMokjangShare={() => setActiveView('mokjang_share')}
+            onSwitchToBudgetBuilder={() => setActiveView('budget_builder')}
             onOpenProductionSetup={() => openSettingsAt('backup')}
             onOpenGeminiSetup={() => openSettingsAt('gemini')}
           />

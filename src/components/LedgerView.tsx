@@ -47,6 +47,7 @@ interface LedgerViewProps {
   onExportCsv: () => void;
   onSwitchToPrintCenter: () => void;
   onSwitchToMokjangShare: () => void;
+  onSwitchToBudgetBuilder: () => void;
   onOpenProductionSetup: () => void;
   onOpenGeminiSetup: () => void;
 }
@@ -72,6 +73,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onExportCsv,
   onSwitchToPrintCenter,
   onSwitchToMokjangShare,
+  onSwitchToBudgetBuilder,
   onOpenProductionSetup,
   onOpenGeminiSetup,
 }) => {
@@ -340,17 +342,41 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </button>
       )}
 
-      {/* 4. 연간 예산안 연동: 관/항별 월 예산 대비 집행 현황 바 */}
-      {budgetComparison.length > 0 && (
-        <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
+      {/* 4. 연간 예산안 연동: 관/항별 월 예산 대비 집행 현황 바 & 직접 편성 바로가기 */}
+      <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
             <span className="text-[15px] font-bold text-[#191F28]">
               예산안 연동 · 관/항별 월평균 예산 대비 지출 현황
             </span>
-            <span className="text-[12px] text-[#8B95A1]">
-              연간 예산안 수정 시 자동 반영
-            </span>
+            <p className="text-[12px] text-[#8B95A1] mt-0.5">
+              예산 항목(관/항)과 배정 금액을 직접 추가·수정하면 장부 카테고리에 실시간 반영됩니다
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={onSwitchToBudgetBuilder}
+            className="px-3.5 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97] transition-all duration-150"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>예산 항목 직접 편성·수정</span>
+          </button>
+        </div>
+
+        {budgetComparison.length === 0 ? (
+          <div className="bg-[#F9FAFB] rounded-2xl p-5 text-center space-y-2">
+            <div className="text-[13.5px] font-semibold text-[#4E5968]">
+              아직 편성된 연간 예산 항목이 없습니다
+            </div>
+            <button
+              type="button"
+              onClick={onSwitchToBudgetBuilder}
+              className="px-4 py-2 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold inline-flex items-center gap-1 active:scale-[0.97]"
+            >
+              <Plus className="w-3.5 h-3.5" />첫 예산 항목 직접 작성하기
+            </button>
+          </div>
+        ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {budgetComparison.map((item) => (
               <div
@@ -388,8 +414,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               </div>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* 5. 일자별 거래 내역 피드 */}
       <section className="bg-[#FFFFFF] rounded-3xl pt-5 pb-3">

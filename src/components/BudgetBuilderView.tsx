@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Calculator,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Eraser,
   Eye,
   FileText,
   Link2,
@@ -42,6 +44,7 @@ interface BudgetBuilderViewProps {
   settings: AppSettings;
   onUpdateSettings: (next: AppSettings) => void;
   activeExpenseCategories: string[];
+  initialTemplate?: BudgetTemplateType;
 }
 
 type BuilderScreenMode = 'card_editor' | 'a4_preview';
@@ -52,18 +55,36 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   settings,
   onUpdateSettings,
   activeExpenseCategories,
+  initialTemplate = 'annual_budget',
 }) => {
   const [activeTemplate, setActiveTemplate] =
-    useState<BudgetTemplateType>('retreat_claim');
+    useState<BudgetTemplateType>(initialTemplate);
 
-  // 모바일 화면(< 860px)에서는 카드형 간편 편집 모드가 기본값, 데스크톱에서는 A4 미리보기 편집이 기본값
-  const [screenMode, setScreenMode] = useState<BuilderScreenMode>(() =>
-    typeof window !== 'undefined' && window.innerWidth < 860
-      ? 'card_editor'
-      : 'a4_preview'
-  );
+  useEffect(() => {
+    if (initialTemplate) {
+      setActiveTemplate(initialTemplate);
+    }
+  }, [initialTemplate]);
+
+  // 모바일(< 860px)은 물론 예산 항목을 직접 작성할 때 가장 편한 카드형 편집기를 기본 제공
+  const [screenMode, setScreenMode] = useState<BuilderScreenMode>('card_editor');
   const [a4ZoomMode, setA4ZoomMode] = useState<'fit' | 'actual'>('fit');
   const [isOverviewExpanded, setIsOverviewExpanded] = useState<boolean>(false);
+
+  // 새 예산 항목 직접 작성기(Composer) 상태
+  const [draftCategory, setDraftCategory] = useState<string>('');
+  const [draftItemName, setDraftItemName] = useState<string>('');
+  const [draftUnitPriceStr, setDraftUnitPriceStr] = useState<string>('');
+  const [draftQtyStr, setDraftQtyStr] = useState<string>('');
+  const [draftQtyUnit, setDraftQtyUnit] = useState<string>('명');
+  const [draftFreqStr, setDraftFreqStr] = useState<string>('');
+  const [draftFreqUnit, setDraftFreqUnit] = useState<string>('회');
+  const [draftFormula, setDraftFormula] = useState<string>('');
+  const [draftAmountStr, setDraftAmountStr] = useState<string>('');
+  const [draftNote, setDraftNote] = useState<string>('');
+  const [composerFeedback, setComposerFeedback] = useState<string>('');
+
+  const composerCategoryRef = useRef<HTMLInputElement | null>(null);
 
   const doc = budgets[activeTemplate];
 
@@ -76,13 +97,86 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     totalGrossAmount - (Number(doc.selfBurdenAmount) || 0)
   );
 
-  // 현재 문서 내 고유 카테고리 목록 (빠른 선택 칩 제공용)
+  // 현재 문서 내 고유 카테고리 + 활성 카테고리 (빠른 선택 칩 제공용)
   const suggestedCategories = Array.from(
     new Set([
       ...doc.items.map((item) => item.category.trim()).filter(Boolean),
       ...activeExpenseCategories,
     ])
-  ).slice(0, 10);
+  ).slice(0, 12);
+
+  const parseDigits = (raw: string): number => {
+    const digits = raw.replace(/[^0-9]/g, '');
+    return digits ? Number(digits) : 0;
+  };
+
+  // 단가 × 수량 × 횟수 입력 시 자동으로 산출 기초 문자열과 총액을 계산
+  const recalculateDraftFromMultipliers = (
+    nextUnitStr: string,
+    nextQtyStr: string,
+    nextQtyUnit: string,
+    nextFreqStr: string,
+    nextFreqUnit: string
+  ) => {
+    const unitPrice = parseDigits(nextUnitStr);
+    const qty = parseDigits(nextQtyStr);
+    const freq = parseDigits(nextFreqStr);
+
+    if (unitPrice > 0) {
+      const effectiveQty = qty > 0 ? qty : 1;
+      const effectiveFreq = freq > 0 ? freq : 1;
+      const total = unitPrice * effectiveQty * effectiveFreq;
+      setDraftAmountStr(formatNumber(total));
+
+      const parts: string[] = [`${formatNumber(unitPrice)}원`];
+      if (qty > 0) parts.push(`${formatNumber(qty)}${nextQtyUnit}`);
+      if (freq > 0) parts.push(`${formatNumber(freq)}${nextFreqUnit}`);
+      setDraftFormula(parts.join(' × '));
+    }
+  };
+
+  const handleCreateItemFromComposer = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCategory =
+      draftCategory.trim() ||
+      (activeTemplate === 'annual_budget' ? '일반사역비' : '프로그램/기타');
+    const cleanItemName = draftItemName.trim();
+    const numericAmount = parseDigits(draftAmountStr);
+
+    if (!cleanItemName) {
+      setComposerFeedback('⚠️ 세부 예산 항목명을 입력해 주세요.');
+      return;
+    }
+
+    const newItem: BudgetLineItem = {
+      id: `bg-${Date.now()}`,
+      category: cleanCategory,
+      itemName: cleanItemName,
+      formula:
+        draftFormula.trim() ||
+        (numericAmount > 0 ? `${formatNumber(numericAmount)}원 × 1식` : ''),
+      amount: numericAmount,
+      note: draftNote.trim(),
+    };
+
+    onUpdateBudget(activeTemplate, {
+      ...doc,
+      items: [...doc.items, newItem],
+    });
+
+    // 작성 폼 초기화 (연속 입력이 편하도록 구분 카테고리는 유지 가능하나 깔끔히 비움)
+    setDraftItemName('');
+    setDraftUnitPriceStr('');
+    setDraftQtyStr('');
+    setDraftFreqStr('');
+    setDraftFormula('');
+    setDraftAmountStr('');
+    setDraftNote('');
+    setComposerFeedback(
+      `✅ [${cleanCategory}] "${cleanItemName}" (${formatWon(numericAmount)}) 항목이 추가되었습니다.`
+    );
+    setTimeout(() => setComposerFeedback(''), 3000);
+  };
 
   const handleFieldChange = <K extends keyof BudgetDocument>(
     key: K,
@@ -120,14 +214,14 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     });
   };
 
-  const handleAddRow = () => {
+  // 더미 텍스트 없이 깨끗한 빈 카드/행 추가
+  const handleAddBlankRow = () => {
     const newItem: BudgetLineItem = {
       id: `bg-${Date.now()}`,
-      category:
-        activeTemplate === 'retreat_claim' ? '프로그램/기타' : '신규사역비',
-      itemName: '세부 예산 항목명을 입력하세요',
-      formula: '10,000원 × 10명 × 1회',
-      amount: 100000,
+      category: '',
+      itemName: '',
+      formula: '',
+      amount: 0,
       note: '',
     };
     onUpdateBudget(activeTemplate, {
@@ -136,12 +230,29 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     });
   };
 
+  // 마지막 1개까지도 모두 삭제 가능하도록 제한 해제
   const handleRemoveRow = (id: string) => {
-    if (doc.items.length <= 1) return;
     onUpdateBudget(activeTemplate, {
       ...doc,
       items: doc.items.filter((item) => item.id !== id),
     });
+  };
+
+  // 샘플 항목을 전부 비우고 백지 상태에서 직접 예산 작성 시작
+  const handleClearAllItems = () => {
+    onUpdateBudget(activeTemplate, {
+      ...doc,
+      items: [],
+      selfBurdenAmount: 0,
+      selfBurdenNote: '',
+    });
+    setScreenMode('card_editor');
+    setComposerFeedback(
+      '🧹 기존 샘플 항목을 모두 비웠습니다. 아래 작성기에서 첫 예산 항목을 직접 추가해 보세요!'
+    );
+    setTimeout(() => {
+      composerCategoryRef.current?.focus();
+    }, 100);
   };
 
   const handleResetTemplate = () => {
@@ -150,11 +261,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
         ? INITIAL_RETREAT_BUDGET
         : INITIAL_ANNUAL_BUDGET;
     onUpdateBudget(activeTemplate, defaultDoc);
-  };
-
-  const parseDigits = (raw: string): number => {
-    const digits = raw.replace(/[^0-9]/g, '');
-    return digits ? Number(digits) : 0;
+    setComposerFeedback('기본 샘플 예산안이 복원되었습니다.');
+    setTimeout(() => setComposerFeedback(''), 2500);
   };
 
   const toggleSchemaSync = () => {
@@ -174,25 +282,34 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold">
-                공문서 빌더 & 예산 스키마 연동
+                직접 예산 편성 & 장부 자동 연동
               </span>
               <h2 className="text-[18px] sm:text-[19px] font-bold text-[#191F28]">
-                연초·연말 예산안 & 수련회 재정 청구서 빌더
+                연간 예산안 & 수련회 청구서 직접 편성 빌더
               </h2>
             </div>
             <p className="text-[13px] text-[#8B95A1] mt-1">
-              모바일에서는 카드로 편하게 입력·수정하고, 인쇄 시에는 A4 1장 규격 공문서로 자동 조판됩니다.
+              우리 청년부의 예산 관/항과 세부 항목을 직접 작성하면, 회계 장부 카테고리와 월별 집행률에 실시간 반영됩니다.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleClearAllItems}
+              className="h-11 px-3.5 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12.5px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+            >
+              <Eraser className="w-4 h-4" />
+              항목 전체 비우기(새로 작성)
+            </button>
+
             <button
               type="button"
               onClick={handleResetTemplate}
               className="h-11 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
             >
               <RotateCcw className="w-4 h-4" />
-              기본값 복원
+              샘플 복원
             </button>
 
             <button
@@ -206,8 +323,32 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           </div>
         </div>
 
-        {/* 1. 문서 템플릿 전환 토글 */}
+        {/* 1. 문서 템플릿 전환 토글 (연간 예산 심의안 기본 전면 배치) */}
         <div className="bg-[#F2F4F6] p-1.5 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={() => setActiveTemplate('annual_budget')}
+            className={`py-3 px-4 rounded-xl text-left flex items-center justify-between transition-all duration-150 active:scale-[0.97] ${
+              activeTemplate === 'annual_budget'
+                ? 'bg-[#FFFFFF] text-[#191F28]'
+                : 'text-[#4E5968] hover:text-[#191F28]'
+            }`}
+          >
+            <div>
+              <div className="text-[14px] font-bold">
+                📅 연초/연말 정기 예산 심의안 (장부 관/항 구조 연동)
+              </div>
+              <div className="text-[12px] text-[#8B95A1] mt-0.5">
+                여기서 작성한 구분(관/항)과 예산액이 회계 장부의 카테고리 및 집행률과 직결됩니다
+              </div>
+            </div>
+            {activeTemplate === 'annual_budget' && (
+              <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold shrink-0">
+                편집 중
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTemplate('retreat_claim')}
@@ -227,31 +368,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
             {activeTemplate === 'retreat_claim' && (
               <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold shrink-0">
-                선택됨
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTemplate('annual_budget')}
-            className={`py-3 px-4 rounded-xl text-left flex items-center justify-between transition-all duration-150 active:scale-[0.97] ${
-              activeTemplate === 'annual_budget'
-                ? 'bg-[#FFFFFF] text-[#191F28]'
-                : 'text-[#4E5968] hover:text-[#191F28]'
-            }`}
-          >
-            <div>
-              <div className="text-[14px] font-bold">
-                📅 연초/연말 정기 예산 심의안 (장부 관/항 구조 연동)
-              </div>
-              <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                매년 예산안의 구분(관/항)을 수정하면 장부 입력 카테고리와 결산서가 자동 변경됩니다
-              </div>
-            </div>
-            {activeTemplate === 'annual_budget' && (
-              <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold shrink-0">
-                선택됨
+                편집 중
               </span>
             )}
           </button>
@@ -270,7 +387,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               }`}
             >
               <Smartphone className="w-4 h-4 shrink-0" />
-              <span>📱 간편 카드 편집</span>
+              <span>📝 예산 항목 직접 작성 · 카드 편집</span>
             </button>
 
             <button
@@ -283,7 +400,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               }`}
             >
               <Eye className="w-4 h-4 shrink-0" />
-              <span>📄 A4 용지 미리보기</span>
+              <span>📄 A4 공문서 미리보기</span>
             </button>
           </div>
 
@@ -321,7 +438,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <span className="text-[11.5px] font-semibold text-[#8B95A1]">
-                활성 지출 관/항 ({activeExpenseCategories.length}개):
+                현재 장부에 연동된 지출 관/항 ({activeExpenseCategories.length}개):
               </span>
               {activeExpenseCategories.map((cat) => (
                 <span
@@ -352,7 +469,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       </section>
 
       {/* =====================================================================
-          모드 A: 모바일 친화적 토스 스타일 카드 에디터 (가로 스크롤 ZERO)
+          모드 A: 새 예산 항목 직접 작성기(Composer) + 모바일 친화적 카드 에디터
          ===================================================================== */}
       {screenMode === 'card_editor' && (
         <div className="no-print max-w-[980px] mx-auto space-y-4">
@@ -399,7 +516,282 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
           </section>
 
-          {/* 2. 문서 제목 & 사역/행사 기본 개요 (아코디언 카드) */}
+          {/* =================================================================
+              2. [핵심] 새 예산 항목 직접 작성기 (Quick Budget Item Composer)
+             ================================================================= */}
+          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4 border-2 border-[#3182F6]/20">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold">
+                    직접 작성해서 추가
+                  </span>
+                  <h3 className="text-[16px] font-bold text-[#191F28]">
+                    ✍️ 새 예산 항목 직접 작성하기
+                  </h3>
+                </div>
+                <p className="text-[12.5px] text-[#8B95A1] mt-0.5">
+                  구분(관/항)과 세부 항목명, 단가×인원×횟수를 입력하면 총액과 산출 기초가 자동 계산되어 예산안에 바로 등록됩니다.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateItemFromComposer} className="space-y-3.5">
+              {/* 1행: 구분(관/항) + 세부 항목명 */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-4">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    구분 (관/항 카테고리)
+                  </label>
+                  <input
+                    ref={composerCategoryRef}
+                    type="text"
+                    value={draftCategory}
+                    onChange={(e) => setDraftCategory(e.target.value)}
+                    placeholder="예: 간식/다과비, 예배/양육비, 새가족비"
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#1B64DA] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+                </div>
+
+                <div className="sm:col-span-8">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    세부 예산 항목명 (필수)
+                  </label>
+                  <input
+                    type="text"
+                    value={draftItemName}
+                    onChange={(e) => setDraftItemName(e.target.value)}
+                    placeholder="예: 주일 소그룹 목장 모임 다과 및 식비 지원"
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+                </div>
+              </div>
+
+              {/* 빠른 구분(관/항) 칩 선택 */}
+              {suggestedCategories.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  <span className="text-[11px] font-semibold text-[#8B95A1] shrink-0">
+                    기존 관/항 선택:
+                  </span>
+                  {suggestedCategories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setDraftCategory(cat)}
+                      className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
+                        draftCategory === cat
+                          ? 'bg-[#3182F6] text-[#FFFFFF]'
+                          : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* 2행: 단가 × 수량/인원 × 횟수/개월 자동 계산기 */}
+              <div className="bg-[#F9FAFB] rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-1.5 text-[12px] font-bold text-[#4E5968]">
+                  <Calculator className="w-3.5 h-3.5 text-[#3182F6]" />
+                  <span>
+                    산출 기초 자동 계산기 (입력 시 아래 산출 기초와 예산 금액이 자동 계산됩니다)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={draftUnitPriceStr}
+                      onChange={(e) => {
+                        const n = parseDigits(e.target.value);
+                        const nextStr = n > 0 ? formatNumber(n) : '';
+                        setDraftUnitPriceStr(nextStr);
+                        recalculateDraftFromMultipliers(
+                          nextStr,
+                          draftQtyStr,
+                          draftQtyUnit,
+                          draftFreqStr,
+                          draftFreqUnit
+                        );
+                      }}
+                      placeholder="단가 (예: 15,000)"
+                      className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                    <span className="absolute right-3 text-[12px] text-[#8B95A1] pointer-events-none">
+                      원
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[#8B95A1] font-bold text-[13px]">
+                      ×
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={draftQtyStr}
+                      onChange={(e) => {
+                        const n = parseDigits(e.target.value);
+                        const nextStr = n > 0 ? formatNumber(n) : '';
+                        setDraftQtyStr(nextStr);
+                        recalculateDraftFromMultipliers(
+                          draftUnitPriceStr,
+                          nextStr,
+                          draftQtyUnit,
+                          draftFreqStr,
+                          draftFreqUnit
+                        );
+                      }}
+                      placeholder="수량/인원 (예: 30)"
+                      className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                    <select
+                      value={draftQtyUnit}
+                      onChange={(e) => {
+                        const nextU = e.target.value;
+                        setDraftQtyUnit(nextU);
+                        recalculateDraftFromMultipliers(
+                          draftUnitPriceStr,
+                          draftQtyStr,
+                          nextU,
+                          draftFreqStr,
+                          draftFreqUnit
+                        );
+                      }}
+                      className="h-10 px-2 rounded-xl bg-[#FFFFFF] text-[12.5px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
+                    >
+                      <option value="명">명</option>
+                      <option value="개">개</option>
+                      <option value="팀">팀</option>
+                      <option value="권">권</option>
+                      <option value="식">식</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[#8B95A1] font-bold text-[13px]">
+                      ×
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={draftFreqStr}
+                      onChange={(e) => {
+                        const n = parseDigits(e.target.value);
+                        const nextStr = n > 0 ? formatNumber(n) : '';
+                        setDraftFreqStr(nextStr);
+                        recalculateDraftFromMultipliers(
+                          draftUnitPriceStr,
+                          draftQtyStr,
+                          draftQtyUnit,
+                          nextStr,
+                          draftFreqUnit
+                        );
+                      }}
+                      placeholder="횟수/기간 (예: 12)"
+                      className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                    <select
+                      value={draftFreqUnit}
+                      onChange={(e) => {
+                        const nextFU = e.target.value;
+                        setDraftFreqUnit(nextFU);
+                        recalculateDraftFromMultipliers(
+                          draftUnitPriceStr,
+                          draftQtyStr,
+                          draftQtyUnit,
+                          draftFreqStr,
+                          nextFU
+                        );
+                      }}
+                      className="h-10 px-2 rounded-xl bg-[#FFFFFF] text-[12.5px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
+                    >
+                      <option value="회">회</option>
+                      <option value="개월">개월</option>
+                      <option value="주">주</option>
+                      <option value="박">박</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3행: 최종 산출 기초 텍스트 & 최종 금액(원) & 비고 & 추가 버튼 */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-5">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    산출 기초 표기 (직접 수정 가능)
+                  </label>
+                  <input
+                    type="text"
+                    value={draftFormula}
+                    onChange={(e) => setDraftFormula(e.target.value)}
+                    placeholder="예: 월 250,000원 × 12개월"
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+                </div>
+
+                <div className="sm:col-span-4">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    편성 / 청구 금액 (원)
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={draftAmountStr}
+                      onChange={(e) => {
+                        const n = parseDigits(e.target.value);
+                        setDraftAmountStr(n > 0 ? formatNumber(n) : '');
+                      }}
+                      placeholder="0"
+                      className="w-full h-11 pl-3.5 pr-9 rounded-2xl bg-[#F9FAFB] text-right text-[16px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                    <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
+                      원
+                    </span>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    비고 (선택)
+                  </label>
+                  <input
+                    type="text"
+                    value={draftNote}
+                    onChange={(e) => setDraftNote(e.target.value)}
+                    placeholder="예: 목장 회식비 포함"
+                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                {composerFeedback ? (
+                  <span className="text-[12.5px] font-bold text-[#1B64DA]">
+                    {composerFeedback}
+                  </span>
+                ) : (
+                  <span className="text-[12px] text-[#8B95A1]">
+                    💡 추가된 항목은 아래 목록과 A4 공문서, 회계 장부 카테고리에 즉시 반영됩니다.
+                  </span>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full sm:w-auto h-11 px-6 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ 이 예산 항목 추가하기</span>
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* 3. 문서 제목 & 사역/행사 기본 개요 (아코디언 카드) */}
           <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
             <button
               type="button"
@@ -408,7 +800,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             >
               <div>
                 <div className="text-[15px] font-bold text-[#191F28]">
-                  1. 문서 제목 및 사역·행사 기본 정보
+                  1. 문서 제목 및 사역·행사 기본 개요 설정
                 </div>
                 <div className="text-[12.5px] text-[#8B95A1] mt-0.5">
                   {doc.title} · {doc.eventPeriod}
@@ -546,70 +938,78 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             )}
           </section>
 
-          {/* 3. 세부 예산 항목 카드 리스트 (5열 표 대신 모바일 최적화된 개별 카드) */}
+          {/* 4. 세부 예산 항목 카드 리스트 */}
           <section className="space-y-3">
             <div className="flex items-center justify-between px-1">
               <div>
                 <h3 className="text-[15px] font-bold text-[#191F28]">
-                  2. 세부 예산·산출 기초 항목 ({doc.items.length}건)
+                  2. 등록된 세부 예산 항목 목록 ({doc.items.length}건)
                 </h3>
                 <p className="text-[12px] text-[#8B95A1]">
-                  각 항목 카드에서 구분(관/항), 세부 항목명, 산출 기초, 금액을 터치해 바로 수정하세요.
+                  등록된 각 항목을 자유롭게 수정·순서 변경·삭제할 수 있습니다.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={handleAddRow}
+                onClick={handleAddBlankRow}
                 className="h-10 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97] transition-all duration-150"
               >
-                <Plus className="w-4 h-4" />
-                항목 추가
+                <Plus className="w-4 h-4" />빈 항목 카드 추가
               </button>
             </div>
 
-            {doc.items.map((item, idx) => (
-              <div
-                key={item.id}
-                className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3.5"
-              >
-                {/* 카드 상단 바: 번호 배지 + 구분(관/항) 입력 + 순서이동/삭제 */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <span className="px-2.5 py-1 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold tabular-nums shrink-0">
-                      #{String(idx + 1).padStart(2, '0')}
-                    </span>
-                    <input
-                      type="text"
-                      value={item.category}
-                      onChange={(e) =>
-                        handleItemChange(item.id, 'category', e.target.value)
-                      }
-                      placeholder="구분(관/항) 입력"
-                      aria-label={`항목 ${idx + 1} 구분`}
-                      className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold w-full max-w-[180px] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                  </div>
+            {doc.items.length === 0 ? (
+              <div className="bg-[#FFFFFF] rounded-3xl p-10 text-center space-y-3">
+                <div className="text-[15px] font-bold text-[#191F28]">
+                  현재 등록된 예산 항목이 없습니다 (백지 상태)
+                </div>
+                <p className="text-[13px] text-[#8B95A1]">
+                  위 <strong>[✍️ 새 예산 항목 직접 작성하기]</strong> 박스에서 우리 청년부의 첫 예산 항목을 추가해 보세요!
+                </p>
+              </div>
+            ) : (
+              doc.items.map((item, idx) => (
+                <div
+                  key={item.id}
+                  className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3.5"
+                >
+                  {/* 카드 상단 바: 번호 배지 + 구분(관/항) 입력 + 순서이동/삭제 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold tabular-nums shrink-0">
+                        #{String(idx + 1).padStart(2, '0')}
+                      </span>
+                      <input
+                        type="text"
+                        value={item.category}
+                        onChange={(e) =>
+                          handleItemChange(item.id, 'category', e.target.value)
+                        }
+                        placeholder="구분(관/항) 입력"
+                        aria-label={`항목 ${idx + 1} 구분`}
+                        className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold w-full max-w-[200px] placeholder:text-[#1B64DA]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleMoveRow(idx, -1)}
-                      disabled={idx === 0}
-                      aria-label="위로 이동"
-                      className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
-                    >
-                      <ChevronUp className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMoveRow(idx, 1)}
-                      disabled={idx === doc.items.length - 1}
-                      aria-label="아래로 이동"
-                      className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
-                    >
-                      <ChevronDown className="w-4 h-4" />
-                    </button>
-                    {doc.items.length > 1 && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleMoveRow(idx, -1)}
+                        disabled={idx === 0}
+                        aria-label="위로 이동"
+                        className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
+                      >
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveRow(idx, 1)}
+                        disabled={idx === doc.items.length - 1}
+                        aria-label="아래로 이동"
+                        className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleRemoveRow(item.id)}
@@ -618,122 +1018,115 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 빠른 구분(관/항) 선택 칩 */}
-                {suggestedCategories.length > 0 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                    <span className="text-[11px] text-[#8B95A1] shrink-0">
-                      빠른 구분:
-                    </span>
-                    {suggestedCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() =>
-                          handleItemChange(item.id, 'category', cat)
-                        }
-                        className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
-                          item.category === cat
-                            ? 'bg-[#3182F6] text-[#FFFFFF]'
-                            : 'bg-[#F2F4F6] text-[#4E5968]'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* 세부 항목명 & 예산 금액 */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                  <div className="sm:col-span-7">
-                    <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                      세부 항목명
-                    </label>
-                    <input
-                      type="text"
-                      value={item.itemName}
-                      onChange={(e) =>
-                        handleItemChange(item.id, 'itemName', e.target.value)
-                      }
-                      placeholder="예: 수련회장 숙박 및 대관료"
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14.5px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
+                    </div>
                   </div>
 
-                  <div className="sm:col-span-5">
-                    <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                      청구 / 예산 금액 (원)
-                    </label>
-                    <div className="relative flex items-center">
+                  {/* 빠른 구분(관/항) 선택 칩 */}
+                  {suggestedCategories.length > 0 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                      <span className="text-[11px] text-[#8B95A1] shrink-0">
+                        빠른 구분:
+                      </span>
+                      {suggestedCategories.map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() =>
+                            handleItemChange(item.id, 'category', cat)
+                          }
+                          className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
+                            item.category === cat
+                              ? 'bg-[#3182F6] text-[#FFFFFF]'
+                              : 'bg-[#F2F4F6] text-[#4E5968]'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 세부 항목명 & 예산 금액 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-7">
+                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
+                        세부 항목명
+                      </label>
                       <input
                         type="text"
-                        inputMode="numeric"
-                        value={formatNumber(item.amount)}
+                        value={item.itemName}
                         onChange={(e) =>
-                          handleItemChange(
-                            item.id,
-                            'amount',
-                            parseDigits(e.target.value)
-                          )
+                          handleItemChange(item.id, 'itemName', e.target.value)
                         }
-                        className="w-full h-11 pl-3.5 pr-9 rounded-2xl bg-[#F9FAFB] text-right text-[16px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                        placeholder="세부 예산 항목명을 입력하세요"
+                        className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14.5px] font-bold text-[#191F28] placeholder:font-normal placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                       />
-                      <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
-                        원
-                      </span>
+                    </div>
+
+                    <div className="sm:col-span-5">
+                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
+                        청구 / 예산 금액 (원)
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={item.amount > 0 ? formatNumber(item.amount) : ''}
+                          placeholder="0"
+                          onChange={(e) =>
+                            handleItemChange(
+                              item.id,
+                              'amount',
+                              parseDigits(e.target.value)
+                            )
+                          }
+                          className="w-full h-11 pl-3.5 pr-9 rounded-2xl bg-[#F9FAFB] text-right text-[16px] font-bold text-[#3182F6] tabular-nums placeholder:text-[#8B95A1]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                        />
+                        <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
+                          원
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 산출 기초 & 비고 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-8">
+                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
+                        산출 기초 (단가 × 인원/수량 × 횟수)
+                      </label>
+                      <input
+                        type="text"
+                        value={item.formula}
+                        onChange={(e) =>
+                          handleItemChange(item.id, 'formula', e.target.value)
+                        }
+                        placeholder="예: 10,000원 × 40명 × 2회"
+                        className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
+                        비고
+                      </label>
+                      <input
+                        type="text"
+                        value={item.note}
+                        onChange={(e) =>
+                          handleItemChange(item.id, 'note', e.target.value)
+                        }
+                        placeholder="비고 메모 (선택)"
+                        className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
                     </div>
                   </div>
                 </div>
-
-                {/* 산출 기초 & 비고 */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                  <div className="sm:col-span-8">
-                    <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                      산출 기초 (단가 × 인원/수량 × 횟수)
-                    </label>
-                    <input
-                      type="text"
-                      value={item.formula}
-                      onChange={(e) =>
-                        handleItemChange(item.id, 'formula', e.target.value)
-                      }
-                      placeholder="예: 10,000원 × 40명 × 2회"
-                      className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-4">
-                    <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                      비고
-                    </label>
-                    <input
-                      type="text"
-                      value={item.note}
-                      onChange={(e) =>
-                        handleItemChange(item.id, 'note', e.target.value)
-                      }
-                      placeholder="비고 메모 (선택)"
-                      className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            <button
-              type="button"
-              onClick={handleAddRow}
-              className="w-full py-4 rounded-3xl bg-[#FFFFFF] text-[#3182F6] text-[14.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all duration-150"
-            >
-              <Plus className="w-5 h-5" />+ 새 세부 예산 항목 카드 추가하기
-            </button>
+              ))
+            )}
           </section>
 
-          {/* 4. 자체 부담금 및 입금 계좌 · 청구인 서명란 카드 */}
+          {/* 5. 자체 부담금 및 입금 계좌 · 청구인 서명란 카드 */}
           <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
             <h3 className="text-[15px] font-bold text-[#191F28]">
               3. 자체 부담금 차감 및 수령 계좌 · 청구인 정보
@@ -854,11 +1247,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
           </section>
 
-          {/* 5. 모바일 하단 빠른 미리보기/인쇄 바 */}
+          {/* 6. 모바일 하단 빠른 미리보기/인쇄 바 */}
           <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] text-[#8B95A1]">
-                실청구/편성 요청 총액
+                실청구/편성 요청 총액 ({doc.items.length}개 항목)
               </div>
               <div className="text-[16px] font-bold tabular-nums truncate">
                 {formatWon(netChurchClaimAmount)}
@@ -889,8 +1282,6 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 
       {/* =====================================================================
           모드 B & 실제 인쇄 DOM: A4 1장 출력용 예산안 / 재정 청구서 본문
-          - 화면에서 card_editor 모드일 때는 숨겨지지만 @media print(.print-force-show) 시에는 항상 출력됨
-          - 화면에서 a4_preview 모드일 때는 모바일 화면 폭에 맞춰 자동 Scale-to-Fit 적용
          ===================================================================== */}
       <div
         className={`max-w-[980px] mx-auto print-force-show ${
@@ -976,7 +1367,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </div>
               </div>
 
-              {/* 3. 행사/사역 기본 개요 테이블 (멀티라인 셀 자동 확장) */}
+              {/* 3. 행사/사역 기본 개요 테이블 */}
               <div className="mt-3.5">
                 <div className="text-[11.5px] font-bold text-[#191F28] mb-1">
                   1. 사역 및 청구 개요
@@ -1066,7 +1457,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </table>
               </div>
 
-              {/* 4. 인라인 편집 가능한 산출 기초 테이블 (멀티라인 셀 세로 확장) */}
+              {/* 4. 인라인 편집 가능한 산출 기초 테이블 */}
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11.5px] font-bold text-[#191F28]">
@@ -1074,10 +1465,10 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   </span>
                   <button
                     type="button"
-                    onClick={handleAddRow}
+                    onClick={handleAddBlankRow}
                     className="no-print px-3 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
                   >
-                    <Plus className="w-3.5 h-3.5" />+ 세부 항목 행 추가
+                    <Plus className="w-3.5 h-3.5" />+ 빈 항목 행 추가
                   </button>
                 </div>
 
@@ -1107,6 +1498,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         <td className="border border-[#E5E8EB] border-x-[#191F28] p-1.5 align-top">
                           <AutoResizeTextarea
                             value={item.category}
+                            placeholder="구분 입력"
                             onChange={(e) =>
                               handleItemChange(
                                 item.id,
@@ -1120,6 +1512,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         <td className="border border-[#E5E8EB] p-1.5 align-top">
                           <AutoResizeTextarea
                             value={item.itemName}
+                            placeholder="세부 항목명 입력"
                             onChange={(e) =>
                               handleItemChange(
                                 item.id,
@@ -1133,6 +1526,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         <td className="border border-[#E5E8EB] p-1.5 align-top">
                           <AutoResizeTextarea
                             value={item.formula}
+                            placeholder="단가 × 수량 × 횟수"
                             onChange={(e) =>
                               handleItemChange(
                                 item.id,
@@ -1172,16 +1566,14 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                               placeholder="-"
                               className="text-center text-[11px] text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
                             />
-                            {doc.items.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveRow(item.id)}
-                                title="행 삭제"
-                                className="no-print text-[#8B95A1] hover:text-[#F04452] p-0.5 shrink-0"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRow(item.id)}
+                              title="행 삭제"
+                              className="no-print text-[#8B95A1] hover:text-[#F04452] p-0.5 shrink-0"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1261,7 +1653,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </table>
               </div>
 
-              {/* 5. 입금 계좌 정보 테이블 (멀티라인 셀 지원) */}
+              {/* 5. 입금 계좌 정보 테이블 */}
               <div className="mt-4">
                 <div className="text-[11.5px] font-bold text-[#191F28] mb-1">
                   3. 예산 수령 지정 입금 계좌 정보
