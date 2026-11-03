@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Printer,
   Settings,
+  Sparkles,
   Users,
 } from 'lucide-react';
 import {
@@ -33,7 +34,10 @@ import { BudgetBuilderView } from './components/BudgetBuilderView';
 import { LedgerView } from './components/LedgerView';
 import { MokjangDashboardView } from './components/MokjangDashboardView';
 import { PrintCenterView } from './components/PrintCenterView';
-import { SyncSettingsModal } from './components/SyncSettingsModal';
+import {
+  SettingsTabType,
+  SyncSettingsModal,
+} from './components/SyncSettingsModal';
 import { TransactionBottomSheet } from './components/TransactionBottomSheet';
 
 const AVAILABLE_MONTHS = [
@@ -69,6 +73,7 @@ export const App: React.FC = () => {
 
   // 바텀시트 및 설정 모달 상태
   const [isTxSheetOpen, setIsTxSheetOpen] = useState<boolean>(false);
+  const [autoTriggerCamera, setAutoTriggerCamera] = useState<boolean>(false);
   const [editingTx, setEditingTx] = useState<ProcessedTransaction | null>(null);
   const [presetMokjangId, setPresetMokjangId] = useState<string | undefined>(
     undefined
@@ -77,27 +82,25 @@ export const App: React.FC = () => {
     MokjangExpenseSubType | undefined
   >(undefined);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [settingsInitialTab, setSettingsInitialTab] =
+    useState<SettingsTabType>('gemini');
 
-  // 선택된 연월 및 계정에 대한 장부 연산 & 증빙 넘버링(#01, #02...)
   const ledgerSummary = useMemo(
     () => computeMonthlyLedger(transactions, yearMonth, accountFilter),
     [transactions, yearMonth, accountFilter]
   );
 
-  // 전체 계정에 대한 해당 월 내역 (목장별 현황 집계용)
   const allAccountsMonthlySummary = useMemo(
     () => computeMonthlyLedger(transactions, yearMonth, 'all'),
     [transactions, yearMonth]
   );
 
-  // 연도별 예산안(annual_budget)과 연동된 동적 카테고리 스키마
   const fiscalSchema = useMemo(
     () =>
       deriveDynamicFiscalSchema(budgets.annual_budget, settings, transactions),
     [budgets.annual_budget, settings, transactions]
   );
 
-  // 이전/다음 월 이동
   const stepMonth = (delta: -1 | 1) => {
     const [y, m] = yearMonth.split('-').map(Number);
     const date = new Date(y, m - 1 + delta, 1);
@@ -108,7 +111,6 @@ export const App: React.FC = () => {
     setYearMonth(nextYm);
   };
 
-  // 내역 추가/수정 핸들러 (Optimistic LocalStorage + GAS 비동기 업로드)
   const handleSaveTransaction = async (savedTx: Transaction) => {
     const exists = transactions.some((t) => t.id === savedTx.id);
     const nextTransactions = exists
@@ -163,7 +165,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // 내역 삭제 핸들러
   const handleDeleteTransaction = async (id: string) => {
     const nextTransactions = transactions.filter((t) => t.id !== id);
     setTransactions(nextTransactions);
@@ -180,7 +181,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // 예산안/청구서 수정 핸들러
   const handleUpdateBudget = (
     templateType: BudgetTemplateType,
     nextDoc: BudgetDocument
@@ -193,13 +193,11 @@ export const App: React.FC = () => {
     SyncManager.saveBudgets(nextBudgets);
   };
 
-  // 목장 목록 및 예산 수정 핸들러
   const handleUpdateMokjangs = (nextMokjangs: MokjangGroup[]) => {
     setMokjangs(nextMokjangs);
     SyncManager.saveMokjangs(nextMokjangs);
   };
 
-  // 커스텀 카테고리 추가 핸들러
   const handleAddCustomCategory = (
     type: TransactionType,
     newCategory: string
@@ -221,14 +219,12 @@ export const App: React.FC = () => {
     }
   };
 
-  // 설정 업데이트 핸들러
   const handleUpdateSettings = (nextSettings: AppSettings) => {
     setSettings(nextSettings);
     SyncManager.saveSettings(nextSettings);
     setSyncStatus(nextSettings.gasWebAppUrl.trim() ? 'synced' : 'local');
   };
 
-  // GAS 전체 불러오기
   const handlePullFromGas = async (url: string) => {
     setSyncStatus('syncing');
     const result = await SyncManager.fetchAllFromGas(url);
@@ -236,7 +232,7 @@ export const App: React.FC = () => {
       setSyncStatus('local');
       throw new Error(result.error || '시트 응답 오류');
     }
-    if (Array.isArray(result.transactions) && result.transactions.length > 0) {
+    if (Array.isArray(result.transactions)) {
       setTransactions(result.transactions);
       SyncManager.saveTransactions(result.transactions);
     }
@@ -255,7 +251,6 @@ export const App: React.FC = () => {
     setSyncStatus('synced');
   };
 
-  // GAS 전체 업로드
   const handlePushAllToGas = async (url: string) => {
     setSyncStatus('syncing');
     const allComputed = computeMonthlyLedger(transactions, yearMonth, 'all');
@@ -272,7 +267,6 @@ export const App: React.FC = () => {
     setSyncStatus('synced');
   };
 
-  // JSON 백업 파일 복원
   const handleImportJson = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -291,8 +285,9 @@ export const App: React.FC = () => {
           SyncManager.saveMokjangs(parsed.mokjangs);
         }
         if (parsed.settings) {
-          setSettings(parsed.settings);
-          SyncManager.saveSettings(parsed.settings);
+          const merged = { ...settings, ...parsed.settings };
+          setSettings(merged);
+          SyncManager.saveSettings(merged);
         }
       } catch (err) {
         console.error('JSON 복원 오류:', err);
@@ -301,20 +296,35 @@ export const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  // 샘플 데이터 초기화
+  const handleStartCleanLedger = (initialCarryover: number) => {
+    const clean = SyncManager.startCleanProductionLedger(
+      yearMonth,
+      initialCarryover
+    );
+    setTransactions(clean.transactions);
+    setSettings(clean.settings);
+    setAccountFilter('all');
+  };
+
   const handleResetSampleData = () => {
     const reset = SyncManager.resetToSampleData();
     setTransactions(reset.transactions);
     setBudgets(reset.budgets);
     setMokjangs(reset.mokjangs);
+    setSettings(reset.settings);
     setYearMonth('2026-11');
     setAccountFilter('all');
+  };
+
+  const openSettingsAt = (tab: SettingsTabType) => {
+    setSettingsInitialTab(tab);
+    setIsSettingsOpen(true);
   };
 
   const renderSyncBadge = () => {
     if (syncStatus === 'syncing') {
       return (
-        <span className="px-3 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1.5">
+        <span className="px-2.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1">
           <span>🔵</span>
           <span>저장 중...</span>
         </span>
@@ -322,19 +332,21 @@ export const App: React.FC = () => {
     }
     if (syncStatus === 'synced' && settings.gasWebAppUrl.trim()) {
       return (
-        <span className="px-3 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5">
+        <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1">
           <span>🟢</span>
           <span>시트 동기화됨</span>
         </span>
       );
     }
     return (
-      <span className="px-3 py-1.5 rounded-full bg-[#F9FAFB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5">
+      <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1">
         <span>⚪</span>
         <span>로컬 모드</span>
       </span>
     );
   };
+
+  const hasGeminiKey = Boolean(settings.geminiApiKey?.trim());
 
   return (
     <div className="min-h-screen bg-[#F2F4F6] text-[#191F28]">
@@ -391,17 +403,30 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* 우측: 구글 시트 동기화 상태 캡슐 배지 및 [⚙️ 연동 설정] 버튼 */}
-          <div className="flex items-center gap-2">
+          {/* 우측: Gemini AI 배지 + 구글 시트 배지 + [⚙️ 연동 설정] */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => openSettingsAt('gemini')}
+              className={`px-2.5 py-1.5 rounded-full text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150 ${
+                hasGeminiKey
+                  ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                  : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#3182F6]" />
+              <span>{hasGeminiKey ? 'AI 스캔 ON' : 'AI 연결'}</span>
+            </button>
+
             {renderSyncBadge()}
 
             <button
               type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              className="px-3.5 py-1.5 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+              onClick={() => openSettingsAt('connection')}
+              className="px-3 py-1.5 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150 ease-out"
             >
               <Settings className="w-3.5 h-3.5" />
-              <span>⚙️ 연동 설정</span>
+              <span>설정</span>
             </button>
           </div>
         </div>
@@ -484,16 +509,20 @@ export const App: React.FC = () => {
             missingReceiptCount={ledgerSummary.missingReceiptCount}
             mokjangs={mokjangs}
             categoryAllocations={fiscalSchema.categoryAllocations}
-            onOpenNewTransaction={() => {
+            isProductionMode={settings.isProductionMode}
+            hasGeminiKey={hasGeminiKey}
+            onOpenNewTransaction={(triggerCam = false) => {
               setEditingTx(null);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setAutoTriggerCamera(Boolean(triggerCam));
               setIsTxSheetOpen(true);
             }}
             onSelectTransaction={(tx) => {
               setEditingTx(tx);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
             onExportCsv={() =>
@@ -505,6 +534,8 @@ export const App: React.FC = () => {
             }
             onSwitchToPrintCenter={() => setActiveView('print_center')}
             onSwitchToMokjangShare={() => setActiveView('mokjang_share')}
+            onOpenProductionSetup={() => openSettingsAt('backup')}
+            onOpenGeminiSetup={() => openSettingsAt('gemini')}
           />
         )}
 
@@ -520,12 +551,14 @@ export const App: React.FC = () => {
               setEditingTx(null);
               setPresetMokjangId(mjId);
               setPresetMokjangSubType(subType);
+              setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
             onSelectTransaction={(tx) => {
               setEditingTx(tx);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
           />
@@ -549,6 +582,7 @@ export const App: React.FC = () => {
               setEditingTx(tx);
               setPresetMokjangId(undefined);
               setPresetMokjangSubType(undefined);
+              setAutoTriggerCamera(false);
               setIsTxSheetOpen(true);
             }}
           />
@@ -565,7 +599,7 @@ export const App: React.FC = () => {
         )}
       </main>
 
-      {/* 내역 입력 및 영수증 업로드 바텀시트 */}
+      {/* 내역 입력 및 AI 영수증 업로드 바텀시트 */}
       <TransactionBottomSheet
         open={isTxSheetOpen}
         onClose={() => {
@@ -573,12 +607,17 @@ export const App: React.FC = () => {
           setEditingTx(null);
           setPresetMokjangId(undefined);
           setPresetMokjangSubType(undefined);
+          setAutoTriggerCamera(false);
         }}
         initialTransaction={editingTx}
         defaultYearMonth={yearMonth}
         defaultAccount={accountFilter === 'all' ? 'general' : accountFilter}
         presetMokjangId={presetMokjangId}
         presetMokjangSubType={presetMokjangSubType}
+        autoTriggerCamera={autoTriggerCamera}
+        geminiApiKey={settings.geminiApiKey || ''}
+        geminiModel={settings.geminiModel || 'gemini-2.5-flash'}
+        onOpenGeminiSettings={() => openSettingsAt('gemini')}
         incomeCategories={fiscalSchema.activeIncomeCategories}
         expenseCategories={fiscalSchema.activeExpenseCategories}
         mokjangs={mokjangs}
@@ -587,10 +626,11 @@ export const App: React.FC = () => {
         onDelete={handleDeleteTransaction}
       />
 
-      {/* 구글 시트·드라이브 연동 설정 및 백업 모달 */}
+      {/* AI 스캐너 · 구글 시트 연동 · 실사용 전환 모달 */}
       <SyncSettingsModal
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsInitialTab}
         settings={settings}
         onSaveSettings={handleUpdateSettings}
         onPullFromGas={handlePullFromGas}
@@ -611,6 +651,7 @@ export const App: React.FC = () => {
           })
         }
         onImportJson={handleImportJson}
+        onStartCleanLedger={handleStartCleanLedger}
         onResetSampleData={handleResetSampleData}
       />
     </div>

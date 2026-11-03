@@ -1,11 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Camera,
   ChevronRight,
   Download,
   FileCheck2,
   Plus,
   Printer,
+  Rocket,
   Search,
+  Sparkles,
   Users,
   X,
 } from 'lucide-react';
@@ -37,11 +40,15 @@ interface LedgerViewProps {
   missingReceiptCount: number;
   mokjangs: MokjangGroup[];
   categoryAllocations: Record<string, CategoryBudgetAllocation>;
-  onOpenNewTransaction: () => void;
+  isProductionMode: boolean;
+  hasGeminiKey: boolean;
+  onOpenNewTransaction: (autoTriggerCamera?: boolean) => void;
   onSelectTransaction: (tx: ProcessedTransaction) => void;
   onExportCsv: () => void;
   onSwitchToPrintCenter: () => void;
   onSwitchToMokjangShare: () => void;
+  onOpenProductionSetup: () => void;
+  onOpenGeminiSetup: () => void;
 }
 
 type ListFilterType = 'all' | 'income' | 'expense' | 'missing_receipt';
@@ -58,11 +65,15 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   missingReceiptCount,
   mokjangs,
   categoryAllocations,
+  isProductionMode,
+  hasGeminiKey,
   onOpenNewTransaction,
   onSelectTransaction,
   onExportCsv,
   onSwitchToPrintCenter,
   onSwitchToMokjangShare,
+  onOpenProductionSetup,
+  onOpenGeminiSetup,
 }) => {
   const [listFilter, setListFilter] = useState<ListFilterType>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -121,7 +132,6 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     return groups;
   }, [filteredTransactions]);
 
-  // 연간 예산안 기준 관/항별 월 예산 대비 금월 집행 현황
   const budgetComparison = useMemo(() => {
     const spentMap = new Map<string, number>();
     processedTransactions
@@ -150,6 +160,45 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   return (
     <div className="max-w-[780px] mx-auto space-y-4 pb-16">
+      {/* 실제 서비스 전환 안내 배너 (데모 샘플 모드일 때만 표시) */}
+      {!isProductionMode && (
+        <div className="bg-[#FFFFFF] rounded-3xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center shrink-0">
+              <Rocket className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-[14px] font-bold text-[#191F28]">
+                실제 청년부 회계 장부로 바로 시작해 보세요
+              </div>
+              <div className="text-[12px] text-[#8B95A1]">
+                현재 기능 체험용 샘플이 표시 중입니다 · 샘플을 비우고 실제 장부로 바로 전환할 수 있어요
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {!hasGeminiKey && (
+              <button
+                type="button"
+                onClick={onOpenGeminiSetup}
+                className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Gemini 연결
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onOpenProductionSetup}
+              className="px-3.5 py-2 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold active:scale-[0.97] transition-all duration-150"
+            >
+              실제 장부로 시작 →
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 1. 통장 쪼개기 탭 필터 */}
       <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 no-scrollbar">
         <div className="flex items-center gap-2">
@@ -182,11 +231,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </button>
       </div>
 
-      {/* 2. 메인 잔액 카드 (Hero Card - Borderless Surface) */}
+      {/* 2. 메인 잔액 카드 (Hero Card) */}
       <section className="bg-[#FFFFFF] rounded-3xl p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[14px] font-semibold text-[#4E5968]">
-            {formatYearMonthKorean(yearMonth)} · {ACCOUNT_LABELS[accountFilter]} 현재 잔액
+            {formatYearMonthKorean(yearMonth)} · {ACCOUNT_LABELS[accountFilter]}{' '}
+            현재 잔액
           </span>
           <button
             type="button"
@@ -198,7 +248,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </button>
         </div>
 
-        {/* Hero Balance (30px, 700, #191F28, tabular-nums) */}
+        {/* Hero Balance */}
         <div className="mt-2 text-[30px] font-bold text-[#191F28] tabular-nums tracking-tight">
           {formatWon(currentBalance)}
         </div>
@@ -233,17 +283,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </div>
         </div>
 
-        {/* 하단 풀사이즈 CTA 버튼 */}
-        <button
-          type="button"
-          onClick={onOpenNewTransaction}
-          className="mt-5 w-full h-13 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[16px] font-semibold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
-        >
-          <Plus className="w-5 h-5" />+ 내역 기록 및 영수증 등록
-        </button>
+        {/* 하단 원스톱 액션 버튼 2종: [📸 영수증 찍어서 AI 자동 기장] + [+ 수기 내역 등록] */}
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <button
+            type="button"
+            onClick={() => onOpenNewTransaction(true)}
+            className="sm:col-span-2 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
+          >
+            <Camera className="w-5 h-5" />
+            <span>📸 영수증 찍어서 AI 자동 기장</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenNewTransaction(false)}
+            className="h-13 px-4 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[15px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+          >
+            <Plus className="w-4 h-4" />
+            <span>직접 내역 입력</span>
+          </button>
+        </div>
       </section>
 
-      {/* 3. 영수증 미증빙 알림 배너 (Actionable Warning Card) */}
+      {/* 3. 영수증 미증빙 알림 배너 */}
       {missingReceiptCount > 0 && (
         <button
           type="button"
@@ -329,7 +391,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </section>
       )}
 
-      {/* 5. 일자별 거래 내역 피드 (Transaction List Sheet - 말줄임 없이 멀티라인 전체 표시) */}
+      {/* 5. 일자별 거래 내역 피드 */}
       <section className="bg-[#FFFFFF] rounded-3xl pt-5 pb-3">
         <div className="px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
@@ -411,10 +473,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <FileCheck2 className="w-6 h-6" />
             </div>
             <div className="text-[16px] font-semibold text-[#4E5968]">
-              조건에 맞는 거래 내역이 없어요
+              기록된 거래 내역이 없어요
             </div>
             <div className="text-[13px] text-[#8B95A1] mt-1">
-              상단 [+ 내역 기록 및 영수증 등록] 버튼으로 새 장부 내역을 추가해 보세요.
+              상단 [📸 영수증 찍어서 AI 자동 기장] 버튼을 눌러 첫 영수증을 촬영해 보세요!
             </div>
           </div>
         ) : (
@@ -456,7 +518,6 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                             {iconMeta.emoji}
                           </div>
 
-                          {/* 중앙: 적요·카테고리·산출근거 모두 줄바꿈(break-words)으로 잘림 없이 전체 표시 */}
                           <div className="min-w-0 flex-1">
                             <div className="text-[16px] font-medium text-[#191F28] whitespace-pre-wrap break-words [word-break:keep-all] leading-snug">
                               {tx.title}

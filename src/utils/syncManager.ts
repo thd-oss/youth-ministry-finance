@@ -70,9 +70,7 @@ export const SyncManager = {
         return INITIAL_TRANSACTIONS;
       }
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) && parsed.length > 0
-        ? parsed
-        : INITIAL_TRANSACTIONS;
+      return Array.isArray(parsed) ? parsed : INITIAL_TRANSACTIONS;
     } catch {
       return INITIAL_TRANSACTIONS;
     }
@@ -182,6 +180,10 @@ export const SyncManager = {
       retreat_claim: INITIAL_RETREAT_BUDGET,
       annual_budget: INITIAL_ANNUAL_BUDGET,
     };
+    const nextSettings: AppSettings = {
+      ...this.loadSettings(),
+      isProductionMode: false,
+    };
     localStorage.setItem(
       STORAGE_KEYS.TRANSACTIONS,
       JSON.stringify(INITIAL_TRANSACTIONS)
@@ -191,11 +193,57 @@ export const SyncManager = {
       STORAGE_KEYS.MOKJANGS,
       JSON.stringify(INITIAL_MOKJANG_GROUPS)
     );
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
     return {
       transactions: INITIAL_TRANSACTIONS,
       budgets,
       mokjangs: INITIAL_MOKJANG_GROUPS,
-      settings: this.loadSettings(),
+      settings: nextSettings,
+    };
+  },
+
+  /**
+   * 테스트용 샘플 내역을 모두 비우고 실제 청년부 회계 운영 모드로 깨끗하게 시작합니다.
+   */
+  startCleanProductionLedger(
+    yearMonth: string,
+    initialCarryoverAmount = 0
+  ): {
+    transactions: Transaction[];
+    settings: AppSettings;
+  } {
+    const cleanTransactions: Transaction[] =
+      initialCarryoverAmount > 0
+        ? [
+            {
+              id: `tx-carryover-${Date.now()}`,
+              date: `${yearMonth}-01`,
+              type: 'income',
+              account: 'general',
+              category: '전월이월',
+              title: '전월 이월금 (실제 장부 시작 잔액)',
+              memo: `${yearMonth} 실제 회계 장부 개시 이월금`,
+              amount: initialCarryoverAmount,
+              paymentMethod: '계좌이체',
+              createdAt: new Date().toISOString(),
+            },
+          ]
+        : [];
+
+    const nextSettings: AppSettings = {
+      ...this.loadSettings(),
+      isProductionMode: true,
+    };
+
+    localStorage.setItem(
+      STORAGE_KEYS.TRANSACTIONS,
+      JSON.stringify(cleanTransactions)
+    );
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
+
+    return {
+      transactions: cleanTransactions,
+      settings: nextSettings,
     };
   },
 
@@ -245,12 +293,17 @@ export const SyncManager = {
       settings: AppSettings;
     }
   ): Promise<{ ok: boolean; syncedAt?: string; error?: string }> {
+    const safeSettings = {
+      ...payload.settings,
+      geminiApiKey: '', // API 키는 기기 로컬에만 보관하고 외부 시트에는 업로드하지 않음
+    };
     const response = await fetch(webAppUrl.trim(), {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         action: 'SYNC_ALL',
         ...payload,
+        settings: safeSettings,
       }),
     });
     return await response.json();

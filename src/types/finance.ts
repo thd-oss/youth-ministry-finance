@@ -95,6 +95,9 @@ export interface BudgetDocument {
 
 export interface AppSettings {
   gasWebAppUrl: string;
+  geminiApiKey: string;
+  geminiModel: string;
+  isProductionMode: boolean;
   departmentName: string;
   authorName: string;
   authorRole: string;

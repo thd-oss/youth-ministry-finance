@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
+  CheckCircle2,
   ExternalLink,
-  ImagePlus,
+  KeyRound,
+  Loader2,
   Plus,
   Sparkles,
   Trash2,
@@ -23,11 +25,9 @@ import {
   Transaction,
   TransactionType,
 } from '../types/finance';
-import {
-  compressReceiptImage,
-  generateMockReceiptSvgDataUrl,
-} from '../utils/imageCompressor';
+import { compressReceiptImage } from '../utils/imageCompressor';
 import { formatNumber } from '../utils/koreanCurrency';
+import { analyzeReceiptWithGemini } from '../utils/receiptAiAnalyzer';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 import { TdsDialog } from './TdsDialog';
 
@@ -39,6 +39,10 @@ interface TransactionBottomSheetProps {
   defaultAccount: LedgerAccount;
   presetMokjangId?: string;
   presetMokjangSubType?: MokjangExpenseSubType;
+  autoTriggerCamera?: boolean;
+  geminiApiKey: string;
+  geminiModel: string;
+  onOpenGeminiSettings: () => void;
   incomeCategories: string[];
   expenseCategories: string[];
   mokjangs: MokjangGroup[];
@@ -55,6 +59,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   defaultAccount,
   presetMokjangId,
   presetMokjangSubType,
+  autoTriggerCamera = false,
+  geminiApiKey,
+  geminiModel,
+  onOpenGeminiSettings,
   incomeCategories,
   expenseCategories,
   mokjangs,
@@ -63,6 +71,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   onDelete,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const submitBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [type, setType] = useState<TransactionType>('expense');
   const [account, setAccount] = useState<LedgerAccount>('general');
@@ -86,7 +95,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   const [receiptMeta, setReceiptMeta] = useState<ReceiptMetadata | undefined>(
     undefined
   );
+
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
+  const [isAnalyzingAi, setIsAnalyzingAi] = useState<boolean>(false);
+  const [aiFilledNotice, setAiFilledNotice] = useState<string>('');
   const [previewScanMode, setPreviewScanMode] = useState<boolean>(false);
   const [isAddingCategory, setIsAddingCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
@@ -95,6 +107,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   useEffect(() => {
     if (!open) return;
     setErrorMsg('');
+    setAiFilledNotice('');
     setIsAddingCategory(false);
     setNewCategoryName('');
 
@@ -135,6 +148,12 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       setReceiptImage(undefined);
       setReceiptDriveUrl(undefined);
       setReceiptMeta(undefined);
+
+      if (autoTriggerCamera) {
+        setTimeout(() => {
+          fileInputRef.current?.click();
+        }, 180);
+      }
     }
   }, [
     open,
@@ -143,6 +162,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     defaultAccount,
     presetMokjangId,
     presetMokjangSubType,
+    autoTriggerCamera,
     expenseCategories,
   ]);
 
@@ -150,7 +170,9 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     setType(nextType);
     if (nextType === 'income') {
       if (!incomeCategories.includes(category)) {
-        setCategory(incomeCategories[1] || incomeCategories[0] || '교회지원금(예산)');
+        setCategory(
+          incomeCategories[1] || incomeCategories[0] || '교회지원금(예산)'
+        );
       }
       setPaymentMethod('계좌이체');
       setMokjangId('');
@@ -178,6 +200,74 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     setAmountStr(formatNumber(next));
   };
 
+  // Gemini AI 영수증 분석 및 자동 채우기 + 등록 버튼 코앞으로 스크롤/포커스
+  const runGeminiExtraction = async (dataUrl: string) => {
+    if (!geminiApiKey.trim()) return;
+
+    setIsAnalyzingAi(true);
+    setErrorMsg('');
+    setAiFilledNotice('');
+
+    try {
+      const result = await analyzeReceiptWithGemini({
+        imageDataUrl: dataUrl,
+        apiKey: geminiApiKey,
+        model: geminiModel || 'gemini-2.5-flash',
+        expenseCategories,
+        mokjangs,
+        defaultYearMonth,
+      });
+
+      setType('expense');
+      if (result.amount > 0) {
+        setAmountStr(formatNumber(result.amount));
+      }
+      if (result.date) {
+        setDate(result.date);
+      }
+      if (result.title) {
+        setTitle(result.title);
+      }
+      if (result.memo) {
+        setMemo(result.memo);
+      }
+      if (result.category) {
+        setCategory(result.category);
+      }
+      if (result.paymentMethod) {
+        setPaymentMethod(result.paymentMethod);
+      }
+      if (result.account) {
+        setAccount(result.account);
+      }
+      if (result.mokjangId && !presetMokjangId) {
+        setMokjangId(result.mokjangId);
+      }
+      if (result.mokjangSubType && !presetMokjangSubType) {
+        setMokjangSubType(result.mokjangSubType);
+      }
+
+      setAiFilledNotice(result.summaryComment);
+
+      // 추출이 완료되면 바로 업로드(장부에 기록하기) 버튼 코앞으로 스크롤 및 포커스 이동
+      setTimeout(() => {
+        submitBtnRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+        submitBtnRef.current?.focus();
+      }, 150);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : 'AI 영수증 분석 중 오류가 발생했습니다. 직접 입력하거나 다시 시도해 주세요.'
+      );
+    } finally {
+      setIsAnalyzingAi(false);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -188,49 +278,24 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       const compressed = await compressReceiptImage(file, 1200, 0.8);
       setReceiptImage(compressed.dataUrl);
       setReceiptMeta(compressed.meta);
+      setIsCompressing(false);
+
+      // Gemini API Key가 연결되어 있으면 사진 업로드 즉시 자동으로 내용 추출 실행
+      if (geminiApiKey.trim()) {
+        await runGeminiExtraction(compressed.dataUrl);
+      }
     } catch (err) {
+      setIsCompressing(false);
       setErrorMsg(
         err instanceof Error
           ? err.message
           : '이미지 압축 중 오류가 발생했습니다.'
       );
     } finally {
-      setIsCompressing(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     }
-  };
-
-  const handleGenerateMockReceipt = () => {
-    const amount = parseRawAmount(amountStr) || 35000;
-    const store = title.trim() || '청년부 지정 가맹점';
-    const desc = memo.trim() || `${category} 품목 1식`;
-    const svgUrl = generateMockReceiptSvgDataUrl({
-      storeName: store,
-      bizNo: '214-88-90123',
-      ownerName: '김대표',
-      address: '서울특별시 강남구 테헤란로 210',
-      dateTime: `${date} 14:20:00`,
-      approvalNo: String(Math.floor(10000000 + Math.random() * 90000000)),
-      cardName: `${paymentMethod} (청년부 공용)`,
-      category,
-      totalAmount: amount,
-      items: [{ name: desc.slice(0, 26), unitPrice: amount, qty: 1, amount }],
-      note: initialTransaction?.evidenceNo
-        ? `증빙 ${initialTransaction.evidenceNo} · ${category}`
-        : `청년부 지출 증빙 · ${category}`,
-    });
-
-    setReceiptImage(svgUrl);
-    setReceiptMeta({
-      width: 460,
-      height: 520,
-      sizeKb: 14,
-      fileName: `${date}_${category}_${amount}원.svg`,
-    });
-    if (!amountStr) setAmountStr(formatNumber(amount));
-    if (!title.trim()) setTitle(store);
   };
 
   const handleConfirmNewCategory = () => {
@@ -278,20 +343,190 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   };
 
   const categories = type === 'income' ? incomeCategories : expenseCategories;
+  const hasGeminiKey = Boolean(geminiApiKey.trim());
 
   return (
     <TdsDialog
       open={open}
       onClose={onClose}
-      title={initialTransaction ? '거래 내역 및 증빙 상세' : '내역 기록 및 영수증 등록'}
+      title={
+        initialTransaction ? '거래 내역 및 증빙 상세' : '내역 기록 및 AI 영수증 등록'
+      }
       subtitle={
         initialTransaction?.evidenceNo
           ? `자동 부여 증빙번호: ${initialTransaction.evidenceNo} (A4 장부·영수증철 1:1 매칭)`
-          : '입력 즉시 장부 잔액, 목장별 지출현황, A4 결산서·영수증철에 반영됩니다'
+          : '영수증 사진을 찍거나 올리면 Gemini AI가 내용을 자동으로 채워줍니다'
       }
       variant="bottom-sheet"
     >
       <form onSubmit={handleSubmit} className="space-y-5 pt-1">
+        {/* =================================================================
+            1. 최상단 Camera-First 영수증 스캐너 (찍으면 AI 자동 채우기)
+           ================================================================= */}
+        <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-1">
+                <Sparkles className="w-3 h-3" />
+                Step 1 · 영수증 스캔
+              </span>
+              <span className="text-[14px] font-bold text-[#191F28]">
+                영수증 사진 찍기 / 업로드
+              </span>
+            </div>
+
+            {!hasGeminiKey ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenGeminiSettings();
+                }}
+                className="px-3 py-1 rounded-full bg-[#FFEEF0] text-[#F04452] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+              >
+                <KeyRound className="w-3 h-3" />
+                Gemini 계정 연결하기
+              </button>
+            ) : (
+              <span className="text-[11.5px] font-semibold text-[#3182F6] flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Gemini AI 자동 판독 켜짐
+              </span>
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          {/* AI 분석 진행 중 오버레이 배너 */}
+          {isAnalyzingAi && (
+            <div className="p-4 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin shrink-0 text-[#3182F6]" />
+              <div>
+                <div className="text-[14px] font-bold">
+                  ✨ Gemini AI가 영수증을 읽고 있어요...
+                </div>
+                <div className="text-[12px] text-[#4E5968] mt-0.5">
+                  가맹점명, 결제금액, 거래일자, 품목별 단가×수량 산출근거를 자동으로 채운 뒤 등록 버튼으로 이동합니다.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {receiptImage ? (
+            <div className="space-y-3">
+              <div className="relative rounded-2xl bg-[#FFFFFF] p-3 flex flex-col items-center">
+                <img
+                  src={receiptImage}
+                  alt="영수증 미리보기"
+                  className={`max-h-60 w-auto object-contain rounded-xl ${
+                    previewScanMode ? 'receipt-scan-filter' : ''
+                  }`}
+                />
+                {receiptMeta && (
+                  <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[12px] text-[#8B95A1] tabular-nums">
+                    <span>
+                      해상도 {receiptMeta.width}×{receiptMeta.height}px
+                    </span>
+                    <span>·</span>
+                    <span>압축 용량 약 {receiptMeta.sizeKb}KB</span>
+                    {receiptDriveUrl && (
+                      <>
+                        <span>·</span>
+                        <a
+                          href={receiptDriveUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[#1B64DA] font-semibold inline-flex items-center gap-0.5 hover:underline"
+                        >
+                          Drive 원본 열기 <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  {hasGeminiKey && (
+                    <button
+                      type="button"
+                      disabled={isAnalyzingAi}
+                      onClick={() => runGeminiExtraction(receiptImage)}
+                      className="px-3 py-2 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      AI로 내용 다시 추출
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setPreviewScanMode((prev) => !prev)}
+                    className={`px-3 py-2 rounded-xl text-[12px] font-semibold transition-all duration-150 active:scale-[0.97] ${
+                      previewScanMode
+                        ? 'bg-[#191F28] text-[#FFFFFF]'
+                        : 'bg-[#E5E8EB] text-[#4E5968]'
+                    }`}
+                  >
+                    ✨ 스캔 보정 {previewScanMode ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    사진 변경
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReceiptImage(undefined);
+                      setReceiptMeta(undefined);
+                      setReceiptDriveUrl(undefined);
+                      setAiFilledNotice('');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-semibold active:scale-[0.97] transition-all duration-150"
+                  >
+                    제거
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isCompressing || isAnalyzingAi}
+              className="w-full py-6 px-4 rounded-2xl bg-[#FFFFFF] hover:bg-[#E8F3FF]/50 text-center flex flex-col items-center justify-center gap-2 transition-all duration-150 ease-out active:scale-[0.97]"
+            >
+              <div className="w-12 h-12 rounded-full bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center">
+                <Camera className="w-6 h-6" />
+              </div>
+              <div className="text-[15px] font-bold text-[#191F28]">
+                {isCompressing
+                  ? '영수증 고화질 압축 처리 중...'
+                  : '📸 여기를 눌러 영수증 촬영 또는 사진 선택'}
+              </div>
+              <div className="text-[12.5px] text-[#4E5968] max-w-[400px] break-words [word-break:keep-all]">
+                {hasGeminiKey
+                  ? '사진을 올리는 즉시 Gemini AI가 금액·가맹점·산출근거·카테고리를 모두 채우고 등록 버튼으로 이동합니다'
+                  : '영수증 없이 수기로만 기록할 경우 아래 입력란에 바로 입력하세요'}
+              </div>
+            </button>
+          )}
+        </div>
+
         {/* 지출 / 수입 세그먼트 토글 */}
         <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 gap-1">
           <button
@@ -414,7 +649,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-[13px] font-medium text-[#4E5968]">
-              관/항 카테고리 선택 (연간 예산안 구조 자동 연동)
+              관/항 카테고리 선택 (연간 예산안 연동)
             </label>
             <button
               type="button"
@@ -555,7 +790,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         )}
 
-        {/* 적요(사용처/내용) 및 상세 산출근거 메모 (멀티라인 자동 높이 조절) */}
+        {/* 적요(사용처/내용) 및 상세 산출근거 메모 */}
         <div className="space-y-3">
           <div>
             <label className="block text-[13px] font-medium text-[#4E5968] mb-1.5">
@@ -590,132 +825,20 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         </div>
 
-        {/* 영수증 사진 첨부 드롭존 / 카메라 촬영 */}
-        <div className="bg-[#F9FAFB] rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-2.5">
-            <div>
-              <span className="text-[14px] font-bold text-[#191F28]">
-                영수증 증빙 사진 첨부
-              </span>
-              <p className="text-[12px] text-[#8B95A1] mt-0.5">
-                Canvas API로 최대 폭 1200px, JPEG 품질 0.8로 자동 최적화됩니다
-              </p>
+        {/* AI 자동 입력 완료 안내 배너 (등록 버튼 바로 위) */}
+        {aiFilledNotice && (
+          <div className="px-4 py-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] flex items-start gap-2.5">
+            <Sparkles className="w-5 h-5 shrink-0 mt-0.5 text-[#3182F6]" />
+            <div className="text-[13px] leading-snug">
+              <div className="font-bold">
+                ✨ AI 자동 채우기 완료: {aiFilledNotice}
+              </div>
+              <div className="text-[#4E5968] text-[12px] mt-0.5">
+                입력된 내용을 확인하시고 바로 아래 [장부에 기록하기] 버튼을 눌러주세요!
+              </div>
             </div>
-            {!receiptImage && (
-              <button
-                type="button"
-                onClick={handleGenerateMockReceipt}
-                className="px-3 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                가상 영수증 자동생성
-              </button>
-            )}
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-
-          {receiptImage ? (
-            <div className="space-y-3">
-              <div className="relative rounded-2xl bg-[#FFFFFF] p-3 flex flex-col items-center">
-                <img
-                  src={receiptImage}
-                  alt="영수증 미리보기"
-                  className={`max-h-72 w-auto object-contain rounded-xl ${
-                    previewScanMode ? 'receipt-scan-filter' : ''
-                  }`}
-                />
-                {receiptMeta && (
-                  <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[12px] text-[#8B95A1] tabular-nums">
-                    <span>
-                      해상도 {receiptMeta.width}×{receiptMeta.height}px
-                    </span>
-                    <span>·</span>
-                    <span>압축 용량 약 {receiptMeta.sizeKb}KB</span>
-                    {receiptDriveUrl && (
-                      <>
-                        <span>·</span>
-                        <a
-                          href={receiptDriveUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[#1B64DA] font-semibold inline-flex items-center gap-0.5 hover:underline"
-                        >
-                          Drive 원본 열기 <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPreviewScanMode((prev) => !prev)}
-                  className={`px-3 py-2 rounded-xl text-[12px] font-semibold transition-all duration-150 active:scale-[0.97] ${
-                    previewScanMode
-                      ? 'bg-[#191F28] text-[#FFFFFF]'
-                      : 'bg-[#E5E8EB] text-[#4E5968]'
-                  }`}
-                >
-                  ✨ 인쇄용 스캔 보정 필터 {previewScanMode ? '켜짐' : '미리보기'}
-                </button>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    다른 사진 변경
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReceiptImage(undefined);
-                      setReceiptMeta(undefined);
-                      setReceiptDriveUrl(undefined);
-                    }}
-                    className="px-3 py-2 rounded-xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-semibold active:scale-[0.97] transition-all duration-150"
-                  >
-                    사진 제거
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isCompressing}
-              className="w-full py-7 rounded-2xl bg-[#FFFFFF] hover:bg-[#F2F4F6] text-center flex flex-col items-center justify-center gap-2 transition-all duration-150 ease-out active:scale-[0.97]"
-            >
-              <div className="w-11 h-11 rounded-full bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center">
-                {isCompressing ? (
-                  <Camera className="w-5 h-5 animate-pulse" />
-                ) : (
-                  <ImagePlus className="w-5 h-5" />
-                )}
-              </div>
-              <div className="text-[14px] font-semibold text-[#191F28]">
-                {isCompressing
-                  ? 'Canvas 고화질 압축 처리 중...'
-                  : '영수증 사진 선택 또는 휴대폰 카메라 촬영'}
-              </div>
-              <div className="text-[12px] text-[#8B95A1]">
-                첨부 시 [증빙 #번호]가 부여되어 A4 증빙철에 자동 배치됩니다
-              </div>
-            </button>
-          )}
-        </div>
+        )}
 
         {errorMsg && (
           <div className="px-4 py-3 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[13px] font-semibold">
@@ -723,7 +846,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         )}
 
-        {/* 하단 액션 버튼 */}
+        {/* 하단 액션 버튼 (AI 추출 완료 시 이 버튼으로 자동 스크롤 & 포커스) */}
         <div className="flex items-center gap-2.5 pt-1">
           {initialTransaction && onDelete && (
             <button
@@ -739,9 +862,11 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             </button>
           )}
           <button
+            ref={submitBtnRef}
             type="submit"
-            className="flex-1 h-13 rounded-2xl bg-[#3182F6] text-[#FFFFFF] font-semibold text-[16px] flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150"
+            className="flex-1 h-14 rounded-2xl bg-[#3182F6] text-[#FFFFFF] font-bold text-[16px] flex items-center justify-center gap-2 focus:ring-4 focus:ring-[#3182F6]/30 active:scale-[0.97] transition-all duration-150"
           >
+            <Check className="w-5 h-5" />
             {initialTransaction ? '수정 내용 저장하기' : '장부에 기록하기'}
           </button>
         </div>
