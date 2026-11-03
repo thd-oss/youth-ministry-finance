@@ -229,10 +229,11 @@ export const App: React.FC = () => {
             {
               id: `ab-${Date.now()}`,
               category: newCategory,
-              itemName: `${newCategory} 연간 편성 예산`,
+              subCategory: '기타',
+              itemName: '',
               formula: `월 ${monthlyBudgetAmount.toLocaleString('ko-KR')}원 × 12개월`,
               amount: annualAmount,
-              note: '장부 내역 등록 시 직접 추가',
+              note: '',
             },
           ],
         };
@@ -348,7 +349,7 @@ export const App: React.FC = () => {
       return (
         <span className="px-2.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1">
           <span>🔵</span>
-          <span>저장 중...</span>
+          <span>저장 중</span>
         </span>
       );
     }
@@ -356,16 +357,11 @@ export const App: React.FC = () => {
       return (
         <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1">
           <span>🟢</span>
-          <span>시트 동기화됨</span>
+          <span>시트 연동</span>
         </span>
       );
     }
-    return (
-      <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1">
-        <span>⚪</span>
-        <span>로컬 모드</span>
-      </span>
-    );
+    return null;
   };
 
   const hasGeminiKey = Boolean(settings.geminiApiKey?.trim());
@@ -469,7 +465,7 @@ export const App: React.FC = () => {
               }`}
             >
               <BookOpen className="w-4 h-4 shrink-0" />
-              <span>1. 회계 장부</span>
+              <span>장부</span>
             </button>
 
             <button
@@ -482,7 +478,7 @@ export const App: React.FC = () => {
               }`}
             >
               <Users className="w-4 h-4 shrink-0" />
-              <span>2. 목장 심방·회식비</span>
+              <span>목장 현황</span>
             </button>
 
             <button
@@ -495,7 +491,7 @@ export const App: React.FC = () => {
               }`}
             >
               <Printer className="w-4 h-4 shrink-0" />
-              <span>3. 결산·영수증철 인쇄</span>
+              <span>결산·인쇄</span>
             </button>
 
             <button
@@ -508,7 +504,7 @@ export const App: React.FC = () => {
               }`}
             >
               <Calculator className="w-4 h-4 shrink-0" />
-              <span>4. 예산안·청구서 빌더</span>
+              <span>예산안·청구서</span>
             </button>
           </nav>
         </div>

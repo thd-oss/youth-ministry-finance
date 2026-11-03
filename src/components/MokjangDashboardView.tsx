@@ -173,19 +173,9 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
       {/* 1. 상단 컨트롤 및 목장 필터 칩 바 */}
       <section className="no-print bg-[#FFFFFF] rounded-3xl p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold">
-                목자 공유 전용
-              </span>
-              <h2 className="text-[19px] font-bold text-[#191F28]">
-                {formatYearMonthKorean(yearMonth)} 목장별 심방비 & 회식비 지출 현황
-              </h2>
-            </div>
-            <p className="text-[13px] text-[#8B95A1] mt-1">
-              전체 목장의 예산 소진율을 한눈에 비교하거나, 특정 목장만 선택해 목자에게 공유할 수 있습니다.
-            </p>
-          </div>
+          <h2 className="text-[19px] font-bold text-[#191F28]">
+            {formatYearMonthKorean(yearMonth)} 목장별 심방·회식비 현황
+          </h2>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
@@ -198,7 +188,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
               }`}
             >
               <Settings2 className="w-4 h-4" />
-              목장·배정예산 설정
+              예산 설정
             </button>
 
             <button
@@ -207,7 +197,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
               className="h-10 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
             >
               <Copy className="w-4 h-4" />
-              {selectedStat ? '이 목장 카톡 공유복사' : '전체 현황 카톡 공유복사'}
+              카톡 공유 복사
             </button>
 
             <button
@@ -216,7 +206,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
               className="h-10 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
             >
               <Printer className="w-4 h-4" />
-              🖨️ 현황표 인쇄
+              인쇄
             </button>
           </div>
         </div>
@@ -228,7 +218,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
           </div>
         )}
 
-        {/* 목장 선택 필터 칩 (전체 보기 vs 특정 목장 단독 보기) */}
+        {/* 목장 선택 필터 칩 */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <button
             type="button"
@@ -239,7 +229,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                 : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
             }`}
           >
-            📊 전체 목장 한눈에 보기 ({mokjangs.length})
+            전체 목장 ({mokjangs.length})
           </button>
 
           {summary.stats.map((st) => {

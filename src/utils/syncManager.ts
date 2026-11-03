@@ -464,11 +464,9 @@ export function deriveDynamicFiscalSchema(
     categoryAllocations[cat].monthlyBudget = Math.round(
       categoryAllocations[cat].annualBudget / 12
     );
-    if (item.subCategory?.trim()) {
-      categoryAllocations[cat].itemNames.push(item.subCategory.trim());
-    }
-    if (item.itemName.trim()) {
-      categoryAllocations[cat].itemNames.push(item.itemName.trim());
+    const subLabel = item.subCategory?.trim() || item.itemName.trim();
+    if (subLabel && !categoryAllocations[cat].itemNames.includes(subLabel)) {
+      categoryAllocations[cat].itemNames.push(subLabel);
     }
   });
 

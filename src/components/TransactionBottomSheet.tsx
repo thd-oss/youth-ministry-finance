@@ -425,17 +425,15 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       onClose={onClose}
       title={
         initialTransaction
-          ? '거래 내역 및 2단계 회계 분류 상세'
+          ? '내역 상세 · 수정'
           : type === 'income'
-            ? '💰 수입 내역 기록하기 (+)'
-            : '🧾 지출 내역 기록 & AI 영수증 스캔 (-)'
+            ? '수입 입력 (+)'
+            : '지출 입력 (-)'
       }
       subtitle={
         initialTransaction?.evidenceNo
-          ? `자동 부여 증빙번호: ${initialTransaction.evidenceNo} (A4 장부·영수증철 1:1 매칭)`
-          : type === 'income'
-            ? '교회 본부 지원금, 수련회 등록비, 월회비, 찬조금 등 수입을 2단계(수입원 → 세부명목)로 기록합니다'
-            : '1차 사역 목적(항)과 2차 지출 품목(세목: 식비·간식, 교재, 강사비 등)으로 정확하게 분류합니다'
+          ? `증빙번호 ${initialTransaction.evidenceNo}`
+          : undefined
       }
       variant="bottom-sheet"
     >
@@ -447,24 +445,24 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           <button
             type="button"
             onClick={() => handleTypeChange('expense')}
-            className={`py-3 rounded-xl text-[14.5px] font-bold transition-all duration-150 ease-out active:scale-[0.97] ${
+            className={`py-2.5 rounded-xl text-[14.5px] font-bold transition-all duration-150 ease-out active:scale-[0.97] ${
               type === 'expense'
                 ? 'bg-[#FFFFFF] text-[#191F28]'
                 : 'text-[#8B95A1] hover:text-[#4E5968]'
             }`}
           >
-            ➖ 지출 내역 기록 (영수증/사역비)
+            ➖ 지출
           </button>
           <button
             type="button"
             onClick={() => handleTypeChange('income')}
-            className={`py-3 rounded-xl text-[14.5px] font-bold transition-all duration-150 ease-out active:scale-[0.97] ${
+            className={`py-2.5 rounded-xl text-[14.5px] font-bold transition-all duration-150 ease-out active:scale-[0.97] ${
               type === 'income'
                 ? 'bg-[#FFFFFF] text-[#3182F6]'
                 : 'text-[#8B95A1] hover:text-[#4E5968]'
             }`}
           >
-            ➕ 수입 내역 기록 (지원금/회비/등록비)
+            ➕ 수입
           </button>
         </div>
 
@@ -477,7 +475,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
         />
 
         {/* =================================================================
-            1. 지출 모드일 때: 최상단 Camera-First 영수증 AI 스캐너
+            1. 지출 모드일 때: 최상단 영수증 스캐너
            ================================================================= */}
         {type === 'expense' && (
           <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
@@ -485,10 +483,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-0.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-1">
                   <Sparkles className="w-3 h-3" />
-                  AI 영수증 스캔
+                  AI 스캔
                 </span>
                 <span className="text-[14px] font-bold text-[#191F28]">
-                  영수증 사진 찍기 / 업로드
+                  영수증 사진
                 </span>
               </div>
 
@@ -502,7 +500,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                   className="px-3 py-1 rounded-full bg-[#FFEEF0] text-[#F04452] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
                 >
                   <KeyRound className="w-3 h-3" />
-                  Gemini 계정 연결하기
+                  AI 연결하기
                 </button>
               ) : (
                 <button
@@ -514,21 +512,16 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                   className="text-[11.5px] font-semibold text-[#3182F6] flex items-center gap-1 hover:underline"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>AI 고정 모델: {geminiModel}</span>
+                  <span>AI 연결됨</span>
                 </button>
               )}
             </div>
 
             {isAnalyzingAi && (
-              <div className="p-4 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] flex items-center gap-3">
+              <div className="p-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] flex items-center gap-2.5">
                 <Loader2 className="w-5 h-5 animate-spin shrink-0 text-[#3182F6]" />
-                <div>
-                  <div className="text-[14px] font-bold">
-                    ✨ Gemini AI가 영수증을 읽고 있어요...
-                  </div>
-                  <div className="text-[12px] text-[#4E5968] mt-0.5">
-                    가맹점명, 결제금액, 거래일자, 품목별 산출근거와 사역/품목 분류를 자동으로 채워줍니다.
-                  </div>
+                <div className="text-[13.5px] font-bold">
+                  영수증 내용을 자동으로 읽고 있어요...
                 </div>
               </div>
             )}
@@ -543,26 +536,16 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                       previewScanMode ? 'receipt-scan-filter' : ''
                     }`}
                   />
-                  {receiptMeta && (
-                    <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[12px] text-[#8B95A1] tabular-nums">
-                      <span>
-                        해상도 {receiptMeta.width}×{receiptMeta.height}px
-                      </span>
-                      <span>·</span>
-                      <span>압축 용량 약 {receiptMeta.sizeKb}KB</span>
-                      {receiptDriveUrl && (
-                        <>
-                          <span>·</span>
-                          <a
-                            href={receiptDriveUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[#1B64DA] font-semibold inline-flex items-center gap-0.5 hover:underline"
-                          >
-                            Drive 원본 열기 <ExternalLink className="w-3 h-3" />
-                          </a>
-                        </>
-                      )}
+                  {receiptDriveUrl && (
+                    <div className="mt-2 text-[12px]">
+                      <a
+                        href={receiptDriveUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[#1B64DA] font-semibold inline-flex items-center gap-0.5 hover:underline"
+                      >
+                        원본 이미지 열기 <ExternalLink className="w-3 h-3" />
+                      </a>
                     </div>
                   )}
                 </div>
@@ -577,7 +560,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                         className="px-3 py-2 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        AI로 내용 다시 추출
+                        다시 스캔
                       </button>
                     )}
 
@@ -590,7 +573,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                           : 'bg-[#E5E8EB] text-[#4E5968]'
                       }`}
                     >
-                      ✨ 스캔 보정 {previewScanMode ? 'ON' : 'OFF'}
+                      흑백 보정 {previewScanMode ? 'ON' : 'OFF'}
                     </button>
                   </div>
 
@@ -601,7 +584,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                       className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      사진 변경
+                      변경
                     </button>
                     <button
                       type="button"
@@ -613,7 +596,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                       }}
                       className="px-3 py-2 rounded-xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-semibold active:scale-[0.97] transition-all duration-150"
                     >
-                      제거
+                      삭제
                     </button>
                   </div>
                 </div>
@@ -623,20 +606,15 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isCompressing || isAnalyzingAi}
-                className="w-full py-5 px-4 rounded-2xl bg-[#FFFFFF] hover:bg-[#E8F3FF]/50 text-center flex flex-col items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97]"
+                className="w-full py-4 px-4 rounded-2xl bg-[#FFFFFF] hover:bg-[#E8F3FF]/50 text-center flex flex-col items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97]"
               >
-                <div className="w-11 h-11 rounded-full bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center">
                   <Camera className="w-5 h-5" />
                 </div>
-                <div className="text-[14.5px] font-bold text-[#191F28]">
+                <div className="text-[14px] font-bold text-[#191F28]">
                   {isCompressing
-                    ? '영수증 고화질 압축 처리 중...'
-                    : '📸 여기를 눌러 영수증 촬영 또는 사진 선택'}
-                </div>
-                <div className="text-[12px] text-[#4E5968]">
-                  {hasGeminiKey
-                    ? '사진을 올리는 즉시 Gemini AI가 금액·가맹점·산출근거를 자동으로 채워줍니다'
-                    : '영수증 없이 수기로만 기록할 경우 아래 입력란에 바로 입력하세요'}
+                    ? '사진 불러오는 중...'
+                    : '📸 영수증 촬영 / 사진 선택'}
                 </div>
               </button>
             )}
@@ -741,20 +719,18 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
         </div>
 
         {/* =================================================================
-            4. [핵심] 2단계 회계 분류 시스템:
-               - 1차(관/항): 어떤 사역 목적 / 어떤 수입원인가?
-               - 2차(세목): 무엇을 구매했는가(간식/교재/강사비 등) / 어떤 세부 명목인가?
+            4. 2단계 회계 분류: 1차 구분(사역/수입원) + 2차 세부 항목(세목)
            ================================================================= */}
         <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-4">
-          {/* Step A: 1차 관/항 (사역 목적 또는 수입원) */}
+          {/* Step A: 1차 구분 */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
                 <Layers className="w-4 h-4 text-[#3182F6]" />
                 <span>
                   {type === 'income'
-                    ? '1차 분류 (관/항 · 어디서 들어온 수입인가요?)'
-                    : '1차 분류 (관/항 · 어느 사역/모임을 위한 지출인가요?)'}
+                    ? '1차 구분 (수입원)'
+                    : '1차 구분 (사역/행사)'}
                 </span>
               </label>
               <button
@@ -762,7 +738,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 onClick={() => setIsAddingCategory((prev) => !prev)}
                 className="text-[12px] font-semibold text-[#3182F6] flex items-center gap-0.5"
               >
-                <Plus className="w-3.5 h-3.5" />새 관/항 추가
+                <Plus className="w-3.5 h-3.5" />추가
               </button>
             </div>
 
@@ -775,8 +751,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                     onChange={(e) => setNewCategoryName(e.target.value)}
                     placeholder={
                       type === 'income'
-                        ? '새 수입 관/항 입력 (예: 바자회수입)'
-                        : '새 지출 사역 관/항 입력 (예: 리더십훈련비)'
+                        ? '새 수입 구분 (예: 바자회수입)'
+                        : '새 사역 구분 (예: 리더십훈련비)'
                     }
                     className="flex-1 h-10 px-3.5 rounded-xl bg-[#F9FAFB] text-[13.5px] font-semibold text-[#191F28] focus:outline-none"
                   />
@@ -792,7 +768,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                             n > 0 ? formatNumber(n) : ''
                           );
                         }}
-                        placeholder="월 배정예산(선택)"
+                        placeholder="월 예산(선택)"
                         className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#F9FAFB] text-right text-[13px] font-bold text-[#3182F6] tabular-nums focus:outline-none"
                       />
                       <span className="absolute right-3 text-[12px] text-[#8B95A1] pointer-events-none">
@@ -805,14 +781,9 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                     onClick={handleConfirmNewCategory}
                     className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold shrink-0"
                   >
-                    + 관/항 등록
+                    등록
                   </button>
                 </div>
-                {type === 'expense' && (
-                  <div className="text-[11.5px] text-[#8B95A1]">
-                    💡 월 배정예산을 함께 입력하면 연간 예산안(×12개월) 항목으로도 자동 편성됩니다.
-                  </div>
-                )}
               </div>
             )}
 
@@ -838,23 +809,12 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             </div>
           </div>
 
-          {/* Step B: 2차 세목 (품목/성질 또는 수입 세부명목) */}
+          {/* Step B: 2차 세부 항목 (세목) */}
           <div className="pt-3 border-t border-[#E5E8EB] space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
-                <Tag className="w-4 h-4 text-[#3182F6]" />
-                <span>
-                  {type === 'income'
-                    ? `2차 세목 ([${category}]의 세부 수입 명목)`
-                    : `2차 세목 ([${category}]에서 무엇을 지출했나요?)`}
-                </span>
-              </label>
-              <span className="text-[11.5px] text-[#8B95A1]">
-                {type === 'expense'
-                  ? '리더십 훈련·행사·수련회 어디서든 [식비·간식/다과]를 세목으로 지정 가능'
-                  : '칩을 선택하거나 직접 입력'}
-              </span>
-            </div>
+            <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
+              <Tag className="w-4 h-4 text-[#3182F6]" />
+              <span>2차 세부 항목 (세목)</span>
+            </label>
 
             <div className="flex flex-wrap gap-1.5">
               {suggestedSubCategories.map((sub) => {
@@ -882,21 +842,21 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               onChange={(e) => setSubCategory(e.target.value)}
               placeholder={
                 type === 'income'
-                  ? '세부 수입 명목 직접 입력 (예: 동계수련회 1차 등록비, 11월 본부 지원금)'
-                  : '세부 지출 세목 직접 입력 (예: 식비·간식/다과, 리더십 훈련 교재, 강사 사례비)'
+                  ? '직접 입력 (예: 월 정기예산 수령, 수련회 참가등록비)'
+                  : '직접 입력 (예: 식비·간식/다과, 교재·도서, 강사·사례비)'
               }
               className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13px] font-medium text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
             />
           </div>
         </div>
 
-        {/* 지출 시: 목장별 심방비/회식비 연동 선택 */}
+        {/* 지출 시: 목장 연결 (선택) */}
         {type === 'expense' && (
           <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-[13.5px] font-bold text-[#191F28]">
                 <Users className="w-4 h-4 text-[#3182F6]" />
-                <span>목장별 심방비·회식비 현황 연동 (선택)</span>
+                <span>목장 연결 (선택)</span>
               </div>
               {mokjangId && (
                 <button
@@ -904,7 +864,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                   onClick={() => setMokjangId('')}
                   className="text-[12px] text-[#8B95A1] hover:text-[#4E5968]"
                 >
-                  목장 선택 해제
+                  해제
                 </button>
               )}
             </div>
@@ -919,7 +879,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                     : 'bg-[#FFFFFF] text-[#4E5968]'
                 }`}
               >
-                부서 공통 (특정 목장 아님)
+                선택 안 함
               </button>
               {mokjangs.map((mj) => {
                 const active = mokjangId === mj.id;
@@ -943,7 +903,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             {mokjangId && (
               <div className="pt-1 flex items-center gap-2">
                 <span className="text-[12.5px] font-semibold text-[#4E5968]">
-                  지출 성격:
+                  구분:
                 </span>
                 {(['visitation', 'fellowship'] as const).map((sub) => (
                   <button
@@ -972,13 +932,11 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         )}
 
-        {/* 적요(사용처/입금출처) 및 상세 산출근거 메모 */}
+        {/* 내역명 및 산출근거 메모 */}
         <div className="space-y-3">
           <div>
             <label className="block text-[13px] font-medium text-[#4E5968] mb-1.5">
-              {type === 'income'
-                ? '적요 (입금 출처 / 수입 내역 제목)'
-                : '적요 (가맹점명 / 지출 내역 제목)'}
+              {type === 'income' ? '입금 내역명' : '사용처 / 내역명'}
             </label>
             <div className="px-4 py-3 rounded-2xl bg-[#F9FAFB] focus-within:bg-[#F2F4F6]">
               <AutoResizeTextarea
@@ -986,8 +944,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={
                   type === 'income'
-                    ? '예: 교회 재정부 11월 정기예산 수령, 동계수련회 등록비 입금'
-                    : '예: 김밥천국 역삼점 (리더십 훈련 간식), 교보문고 (목자반 교재)'
+                    ? '예: 11월 청년부 정기예산 수령'
+                    : '예: 김밥천국 역삼점 (리더십 훈련 간식)'
                 }
                 className="text-[15px] font-medium text-[#191F28] placeholder:text-[#8B95A1]"
               />
@@ -996,7 +954,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
 
           <div>
             <label className="block text-[13px] font-medium text-[#4E5968] mb-1.5">
-              상세 산출근거 메모 (결산 보고서 및 영수증철 하단에 인쇄됨)
+              산출근거 / 메모 (선택)
             </label>
             <div className="px-4 py-3 rounded-2xl bg-[#F9FAFB] focus-within:bg-[#F2F4F6]">
               <AutoResizeTextarea
@@ -1004,8 +962,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 onChange={(e) => setMemo(e.target.value)}
                 placeholder={
                   type === 'income'
-                    ? '예: 수련회 등록비 25,000원 × 32명 입금 완료'
-                    : '예: 참치김밥 4,500원×15줄 + 라면 5,000원×5개 (리더십 훈련 저녁)'
+                    ? '예: 등록비 25,000원 × 32명'
+                    : '예: 김밥 4,500원 × 15줄'
                 }
                 className="text-[14px] text-[#4E5968] placeholder:text-[#8B95A1]"
               />
@@ -1013,13 +971,13 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         </div>
 
-        {/* 수입 모드일 때: 선택적 이체확인증/증빙 첨부 슬롯 */}
+        {/* 수입 모드일 때: 선택적 이체확인증 첨부 */}
         {type === 'income' && (
           <div className="bg-[#F9FAFB] rounded-2xl p-3.5 flex items-center justify-between gap-3">
             <div className="text-[12.5px] text-[#4E5968]">
               {receiptImage
-                ? '📎 입금/이체확인증 이미지가 첨부되었습니다.'
-                : '📎 입금내역 캡처나 통장 사본 첨부가 필요하면 우측 버튼을 누르세요 (선택)'}
+                ? '📎 이체확인증이 첨부되었습니다.'
+                : '📎 이체확인증 이미지 첨부 (선택)'}
             </div>
             <button
               type="button"
@@ -1027,18 +985,15 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               className="px-3 py-1.5 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold shrink-0 flex items-center gap-1"
             >
               <Upload className="w-3.5 h-3.5 text-[#3182F6]" />
-              {receiptImage ? '이미지 변경' : '이체확인증 첨부'}
+              {receiptImage ? '변경' : '첨부'}
             </button>
           </div>
         )}
 
-        {/* AI 자동 채우기 완료 브리핑 배너 */}
         {aiFilledNotice && (
           <div className="px-4 py-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>
-              ✨ {aiFilledNotice} — 내용을 확인하고 아래 버튼을 눌러 등록하세요!
-            </span>
+            <span>{aiFilledNotice}</span>
           </div>
         )}
 
@@ -1071,12 +1026,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             className="flex-1 h-13 rounded-2xl bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] font-semibold text-[16px] flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out focus:ring-4 focus:ring-[#3182F6]/30"
           >
             {initialTransaction
-              ? '수정 내용 저장하기'
+              ? '저장하기'
               : type === 'income'
-                ? '💰 수입 내역 장부에 기록하기'
-                : aiFilledNotice
-                  ? '✅ AI 추출 내역 장부에 바로 기록하기'
-                  : '🧾 지출 내역 장부에 기록하기'}
+                ? '수입 등록하기'
+                : '지출 등록하기'}
           </button>
         </div>
       </form>

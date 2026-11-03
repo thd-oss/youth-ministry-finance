@@ -237,19 +237,9 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
          ===================================================================== */}
       <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold">
-                이중 결재 자동화
-              </span>
-              <h2 className="text-[18px] sm:text-[19px] font-bold text-[#191F28]">
-                월별 결산 장부 + 영수증 증빙철 인쇄 센터
-              </h2>
-            </div>
-            <p className="text-[13px] text-[#8B95A1] mt-1">
-              모바일에서는 영수증 카드로 누락 증빙과 산출근거를 편하게 검수하고, A4 미리보기 및 인쇄로 즉시 출력하세요.
-            </p>
-          </div>
+          <h2 className="text-[18px] sm:text-[19px] font-bold text-[#191F28]">
+            결산서 · 영수증철 인쇄
+          </h2>
 
           <button
             type="button"
@@ -257,11 +247,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-semibold flex items-center justify-center gap-2 shrink-0 active:scale-[0.97] transition-all duration-150"
           >
             <Printer className="w-4 h-4" />
-            🖨️ A4 인쇄 / PDF 저장
+            인쇄 / PDF 저장
           </button>
         </div>
 
-        {/* 화면 모드 전환 탭: [📱 모바일 영수증 검수·편집] vs [📄 A4 용지 미리보기] */}
+        {/* 화면 모드 전환 탭 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-[#F9FAFB] p-2.5 rounded-2xl">
           <div className="bg-[#E5E8EB] p-1 rounded-xl grid grid-cols-2 gap-1 flex-1">
             <button
@@ -275,7 +265,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             >
               <Smartphone className="w-4 h-4 shrink-0" />
               <span>
-                📱 영수증 카드 검수·편집 ({allExpenseEvidenceItems.length})
+                📱 영수증 검수 ({allExpenseEvidenceItems.length})
               </span>
             </button>
 
@@ -289,7 +279,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               }`}
             >
               <Eye className="w-4 h-4 shrink-0" />
-              <span>📄 A4 용지 미리보기</span>
+              <span>📄 A4 미리보기</span>
             </button>
           </div>
 
@@ -304,12 +294,12 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               {a4ZoomMode === 'fit' ? (
                 <>
                   <Maximize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>현재: 화면 폭 맞춤 자동축소 (탭하여 100% 보기)</span>
+                  <span>화면 맞춤 (100% 보기)</span>
                 </>
               ) : (
                 <>
                   <Minimize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>현재: 100% 원본 크기 (탭하여 화면 맞춤)</span>
+                  <span>100% 크기 (화면 맞춤)</span>
                 </>
               )}
             </button>
@@ -769,18 +759,15 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                       ) : (
                         <div className="w-full py-6 px-4 text-center space-y-3">
                           <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FFEEF0] text-[#F04452] text-[12px] font-bold">
-                            [{tx.evidenceNo}] 디지털 영수증 미첨부
+                            [{tx.evidenceNo}] 영수증 미첨부
                           </div>
-                          <p className="text-[12.5px] text-[#8B95A1] break-words [word-break:keep-all]">
-                            아래 버튼으로 영수증을 즉시 촬영해 넣거나, 상세 창에서 AI 자동 추출을 실행할 수 있습니다.
-                          </p>
                           <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                             <label className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-[0.97]">
                               <Camera className="w-4 h-4" />
                               <span>
                                 {isUploading
-                                  ? '압축 저장 중...'
-                                  : '📷 사진 바로 등록'}
+                                  ? '저장 중...'
+                                  : '📷 사진 등록'}
                               </span>
                               <input
                                 type="file"
@@ -801,7 +788,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                               className="h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97]"
                             >
                               <Sparkles className="w-4 h-4 text-[#3182F6]" />
-                              <span>AI 스캔/상세편집</span>
+                              <span>AI 스캔</span>
                             </button>
                           </div>
                         </div>
@@ -811,7 +798,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                     {/* 하단 산출근거 메모 인라인 편집란 */}
                     <div>
                       <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                        인쇄용 산출근거 · 품목 메모 (수정 시 결산서·영수증철에 즉시 반영)
+                        산출근거 · 메모
                       </label>
                       <input
                         type="text"

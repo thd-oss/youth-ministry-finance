@@ -379,18 +379,17 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     <TdsDialog
       open={open}
       onClose={onClose}
-      title="AI 영수증 스캐너 & 구글 시트 연동 설정"
-      subtitle="내 API 키에서 사용 가능한 최신 Gemini 모델을 불러와 선택·고정하고 시트 동기화를 관리합니다"
+      title="설정"
       variant="modal"
     >
       <div className="space-y-5">
         {/* 상단 탭 전환 (4개 탭) */}
         <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1">
           {[
-            { id: 'gemini', label: '✨ 1. Gemini AI 연결' },
-            { id: 'connection', label: '🟢 2. 구글 시트 연동' },
-            { id: 'code_gs', label: '📋 3. Code.gs 복사' },
-            { id: 'backup', label: '🚀 4. 실사용·백업' },
+            { id: 'gemini', label: '✨ AI 연결' },
+            { id: 'connection', label: '🟢 시트 연동' },
+            { id: 'code_gs', label: '📋 스크립트 복사' },
+            { id: 'backup', label: '🚀 초기화·백업' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -441,14 +440,9 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
           <div className="space-y-4">
             <div className="bg-[#F9FAFB] rounded-2xl p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-1.5 text-[15px] font-bold text-[#191F28]">
-                    <Sparkles className="w-4 h-4 text-[#3182F6]" />
-                    <span>Gemini API 키 연결 & 가용 모델 선택·고정</span>
-                  </div>
-                  <p className="text-[12.5px] text-[#4E5968] mt-0.5">
-                    1단계로 내 API 키에서 사용 가능한 모델 목록을 불러온 뒤, 원하는 모델을 선택해 고정하세요.
-                  </p>
+                <div className="flex items-center gap-1.5 text-[15px] font-bold text-[#191F28]">
+                  <Sparkles className="w-4 h-4 text-[#3182F6]" />
+                  <span>Gemini API 키 & 모델 설정</span>
                 </div>
 
                 <a
@@ -458,7 +452,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   className="px-3.5 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
-                  Google AI Studio 키 발급
+                  API 키 발급
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
@@ -497,7 +491,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
               {/* Step 1: API 키 입력 및 모델 목록 실시간 조회 */}
               <div className="space-y-2">
                 <label className="block text-[12.5px] font-bold text-[#191F28]">
-                  Step 1 · Gemini API Key 입력 후 사용 가능 모델 불러오기
+                  1. API 키 입력
                 </label>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
@@ -505,7 +499,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                       type={showApiKey ? 'text' : 'password'}
                       value={geminiKeyInput}
                       onChange={(e) => setGeminiKeyInput(e.target.value)}
-                      placeholder="AIzaSy... 로 시작하는 Gemini API 키 붙여넣기"
+                      placeholder="AIzaSy... API 키 입력"
                       className="w-full h-11 pl-3.5 pr-10 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6] font-mono"
                     />
                     <button
@@ -532,7 +526,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     ) : (
                       <RefreshCw className="w-4 h-4" />
                     )}
-                    <span>1. 사용 가능 모델 불러오기</span>
+                    <span>사용 가능 모델 불러오기</span>
                   </button>
                 </div>
               </div>
@@ -541,15 +535,11 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
               <div className="space-y-2.5 pt-2 border-t border-[#E5E8EB]">
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-[12.5px] font-bold text-[#191F28]">
-                    Step 2 · 사용할 Gemini 모델 선택 및 고정 (
-                    {hasFetchedLiveModels
-                      ? `내 API 키 가용 모델 ${availableModels.length}개 조회됨`
-                      : '기본 추천 목록'}
-                    )
+                    2. 모델 선택 ({availableModels.length}개)
                   </label>
                   {hasFetchedLiveModels && (
                     <span className="px-2 py-0.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold">
-                      실시간 조회 완료
+                      조회 완료
                     </span>
                   )}
                 </div>

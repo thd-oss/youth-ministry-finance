@@ -179,10 +179,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             </div>
             <div>
               <div className="text-[14px] font-bold text-[#191F28]">
-                실제 청년부 회계 장부로 바로 시작해 보세요
+                현재 샘플 데이터가 표시 중입니다
               </div>
               <div className="text-[12px] text-[#8B95A1]">
-                현재 기능 체험용 샘플이 표시 중입니다 · 샘플을 비우고 실제 장부로 바로 전환할 수 있어요
+                샘플을 비우고 실제 장부로 바로 시작할 수 있습니다
               </div>
             </div>
           </div>
@@ -195,7 +195,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                Gemini 연결
+                AI 연결
               </button>
             )}
             <button
@@ -203,7 +203,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               onClick={onOpenProductionSetup}
               className="px-3.5 py-2 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold active:scale-[0.97] transition-all duration-150"
             >
-              실제 장부로 시작 →
+              실제 장부 시작 →
             </button>
           </div>
         </div>
@@ -237,7 +237,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           className="px-3.5 py-2 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold shrink-0 flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
         >
           <Users className="w-3.5 h-3.5" />
-          목장별 심방·회식비 현황
+          목장 현황
         </button>
       </div>
 
@@ -246,7 +246,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[14px] font-semibold text-[#4E5968]">
             {formatYearMonthKorean(yearMonth)} · {ACCOUNT_LABELS[accountFilter]}{' '}
-            현재 잔액
+            잔액
           </span>
           <button
             type="button"
@@ -254,7 +254,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="px-3 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
           >
             <Printer className="w-3.5 h-3.5" />
-            결산장부·영수증철 인쇄
+            결산·인쇄
           </button>
         </div>
 
@@ -267,7 +267,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
             <div className="text-[12px] font-medium text-[#8B95A1]">
-              전월 이월금
+              전월 이월
             </div>
             <div className="mt-1 text-[15px] font-semibold text-[#4E5968] tabular-nums">
               {formatWon(carryoverAmount)}
@@ -293,7 +293,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </div>
         </div>
 
-        {/* 하단 원스톱 액션 버튼 3종: [📸 영수증 AI 지출 기장] + [➖ 직접 지출 입력] + [➕ 수입 내역 등록] */}
+        {/* 하단 원스톱 액션 버튼 3종 */}
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-12 gap-2.5">
           <button
             type="button"
@@ -301,7 +301,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="sm:col-span-6 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Camera className="w-5 h-5" />
-            <span>📸 영수증 찍어서 AI 지출 기장</span>
+            <span>📸 영수증 AI 스캔</span>
           </button>
 
           <button
@@ -310,7 +310,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#191F28] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Plus className="w-4 h-4" />
-            <span>➖ 직접 지출 입력</span>
+            <span>➖ 지출 입력</span>
           </button>
 
           <button
@@ -319,7 +319,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Plus className="w-4 h-4" />
-            <span>➕ 수입 내역 등록</span>
+            <span>➕ 수입 입력</span>
           </button>
         </div>
       </section>
@@ -333,21 +333,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               prev === 'missing_receipt' ? 'all' : 'missing_receipt'
             )
           }
-          className="w-full bg-[#FFEEF0] rounded-3xl px-5 py-4 flex items-center justify-between gap-3 text-left active:scale-[0.97] transition-all duration-150 ease-out"
+          className="w-full bg-[#FFEEF0] rounded-3xl px-5 py-3.5 flex items-center justify-between gap-3 text-left active:scale-[0.97] transition-all duration-150 ease-out"
         >
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="text-[20px] shrink-0" role="img" aria-label="경고">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-[18px] shrink-0" role="img" aria-label="경고">
               🚨
             </span>
-            <div className="min-w-0">
-              <div className="text-[15px] font-bold text-[#F04452] tabular-nums break-words [word-break:keep-all]">
-                영수증 사진이 누락된 지출이 {missingReceiptCount}건 있어요
-              </div>
-              <div className="text-[13px] text-[#4E5968] mt-0.5 break-words [word-break:keep-all]">
-                {listFilter === 'missing_receipt'
-                  ? '현재 미증빙 내역만 보고 있어요 · 다시 누르면 전체 내역으로 돌아갑니다'
-                  : '여기를 눌러 미증빙 내역만 모아보고 영수증 사진을 등록하세요'}
-              </div>
+            <div className="text-[14px] font-bold text-[#F04452] tabular-nums break-words [word-break:keep-all]">
+              영수증 미첨부 지출 {missingReceiptCount}건
             </div>
           </div>
           <div className="flex items-center gap-1 text-[13px] font-semibold text-[#F04452] shrink-0">
@@ -359,38 +352,33 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </button>
       )}
 
-      {/* 4. 연간 예산안 연동: 관/항별 월 예산 대비 집행 현황 바 & 직접 편성 바로가기 */}
+      {/* 4. 사역별 월 예산 현황 */}
       <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <span className="text-[15px] font-bold text-[#191F28]">
-              예산안 연동 · 관/항별 월평균 예산 대비 지출 현황
-            </span>
-            <p className="text-[12px] text-[#8B95A1] mt-0.5">
-              예산 항목(관/항)과 배정 금액을 직접 추가·수정하면 장부 카테고리에 실시간 반영됩니다
-            </p>
-          </div>
+          <span className="text-[15px] font-bold text-[#191F28]">
+            사역별 월 예산 현황
+          </span>
           <button
             type="button"
             onClick={onSwitchToBudgetBuilder}
-            className="px-3.5 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97] transition-all duration-150"
+            className="px-3 py-1.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97] transition-all duration-150"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>예산 항목 직접 편성·수정</span>
+            <span>예산 편집</span>
           </button>
         </div>
 
         {budgetComparison.length === 0 ? (
           <div className="bg-[#F9FAFB] rounded-2xl p-5 text-center space-y-2">
             <div className="text-[13.5px] font-semibold text-[#4E5968]">
-              아직 편성된 연간 예산 항목이 없습니다
+              등록된 예산 항목이 없습니다
             </div>
             <button
               type="button"
               onClick={onSwitchToBudgetBuilder}
               className="px-4 py-2 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold inline-flex items-center gap-1 active:scale-[0.97]"
             >
-              <Plus className="w-3.5 h-3.5" />첫 예산 항목 직접 작성하기
+              <Plus className="w-3.5 h-3.5" />예산 항목 추가
             </button>
           </div>
         ) : (
@@ -451,7 +439,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               className="px-3 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
             >
               <Download className="w-3.5 h-3.5" />
-              엑셀(CSV) 저장
+              엑셀 저장
             </button>
           </div>
         </div>
@@ -464,7 +452,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="가맹점명, 산출근거, 카테고리, 목장명(1목장), 증빙번호(#01) 검색"
+              placeholder="내역, 사역·세목, 목장명 검색"
               className="w-full h-11 pl-10 pr-9 rounded-2xl bg-[#F9FAFB] text-[14px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:bg-[#F2F4F6]"
             />
             {searchQuery && (
@@ -481,8 +469,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {[
               { id: 'all', label: '전체' },
-              { id: 'income', label: '수입 내역' },
-              { id: 'expense', label: '지출 내역' },
+              { id: 'income', label: '수입' },
+              { id: 'expense', label: '지출' },
               {
                 id: 'missing_receipt',
                 label: `영수증 미첨부 (${missingReceiptCount})`,
@@ -516,10 +504,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <FileCheck2 className="w-6 h-6" />
             </div>
             <div className="text-[16px] font-semibold text-[#4E5968]">
-              기록된 거래 내역이 없어요
-            </div>
-            <div className="text-[13px] text-[#8B95A1] mt-1">
-              상단 [📸 영수증 찍어서 AI 자동 기장] 버튼을 눌러 첫 영수증을 촬영해 보세요!
+              거래 내역이 없습니다
             </div>
           </div>
         ) : (
