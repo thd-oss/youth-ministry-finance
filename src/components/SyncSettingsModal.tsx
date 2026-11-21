@@ -3,6 +3,8 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   CloudDownload,
   CloudUpload,
   Copy,
@@ -11,8 +13,11 @@ import {
   Eye,
   EyeOff,
   FileSpreadsheet,
+  FolderOpen,
   KeyRound,
   Loader2,
+  LogIn,
+  LogOut,
   Pin,
   RefreshCw,
   Rocket,
@@ -22,6 +27,12 @@ import {
 } from 'lucide-react';
 import { AppSettings, GeminiModelOption } from '../types/finance';
 import { GAS_CODE_TEMPLATE } from '../utils/gasCodeTemplate';
+import {
+  BUILTIN_GOOGLE_CLIENT_ID,
+  getEffectiveGoogleClientId,
+  GoogleSession,
+  GoogleWorkspaceInfo,
+} from '../utils/googleDirectSync';
 import { formatNumber } from '../utils/koreanCurrency';
 import {
   FALLBACK_GEMINI_MODELS,
@@ -31,7 +42,7 @@ import {
 } from '../utils/receiptAiAnalyzer';
 import { TdsDialog } from './TdsDialog';
 
-export type SettingsTabType = 'gemini' | 'connection' | 'code_gs' | 'backup';
+export type SettingsTabType = 'connection' | 'gemini' | 'backup';
 
 interface DataSummaryInfo {
   transactionCount: number;
@@ -45,7 +56,21 @@ interface SyncSettingsModalProps {
   onClose: () => void;
   initialTab?: SettingsTabType;
   settings: AppSettings;
+  googleSession: GoogleSession | null;
   onSaveSettings: (next: AppSettings) => void;
+  onGoogleSignIn: (clientId: string) => Promise<{
+    session: GoogleSession;
+    workspace: GoogleWorkspaceInfo;
+    autoBackedUp: boolean;
+  }>;
+  onGooglePushAll: () => Promise<void>;
+  onGooglePullAll: () => Promise<{
+    transactionCount: number;
+    mokjangCount: number;
+    annualBudgetCount: number;
+    retreatBudgetCount: number;
+  }>;
+  onGoogleSignOut: (disconnectSheet?: boolean) => void;
   onPullFromGas: (url: string) => Promise<void>;
   onPushAllToGas: (url: string) => Promise<void>;
   onExportCsv: () => void;
@@ -64,9 +89,14 @@ interface FeedbackBannerState {
 export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   open,
   onClose,
-  initialTab = 'gemini',
+  initialTab = 'connection',
   settings,
+  googleSession,
   onSaveSettings,
+  onGoogleSignIn,
+  onGooglePushAll,
+  onGooglePullAll,
+  onGoogleSignOut,
   onPullFromGas,
   onPushAllToGas,
   onExportCsv,
@@ -79,6 +109,15 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   const wasOpenRef = useRef<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<SettingsTabType>(initialTab);
+  const [clientIdInput, setClientIdInput] = useState<string>(
+    getEffectiveGoogleClientId(settings)
+  );
+  const [showOAuthGuide, setShowOAuthGuide] = useState<boolean>(false);
+  const [showLegacyGas, setShowLegacyGas] = useState<boolean>(false);
+  const [showAdvancedFileBackup, setShowAdvancedFileBackup] =
+    useState<boolean>(false);
+  const [copiedOrigin, setCopiedOrigin] = useState<boolean>(false);
+
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>(
     settings.geminiApiKey || ''
   );
@@ -117,12 +156,11 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
 
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 모달이 닫혀 있다가 열리는 시점(false -> true)에만 초기 상태를 세팅하여,
-  // 모달 내부에서 설정을 저장해도 탭이나 검증 결과 배너가 절대 사라지지 않도록 보장
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       wasOpenRef.current = true;
       setActiveTab(initialTab);
+      setClientIdInput(getEffectiveGoogleClientId(settings));
       setGeminiKeyInput(settings.geminiApiKey || '');
       setGeminiModelInput(settings.geminiModel || 'gemini-3-flash-preview');
       if (
@@ -150,9 +188,123 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     return digits ? Number(digits) : 0;
   };
 
-  /**
-   * Step 1: 사용자의 API 키로 Google 서버(GET /v1beta/models)에서 실제 사용 가능한 모델 목록을 읽어옵니다.
-   */
+  const currentOrigin =
+    typeof window !== 'undefined' && window.location.origin
+      ? window.location.origin
+      : 'https://thd-oss.github.io';
+
+  const handleCopyText = async (text: string, onDone: () => void) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    onDone();
+  };
+
+  // =========================================================================
+  // Google OAuth 원클릭 로그인 & 시트 자동 생성/백업/복원
+  // =========================================================================
+  const handleClickGoogleSignIn = async () => {
+    const targetClientId = clientIdInput.trim() || BUILTIN_GOOGLE_CLIENT_ID;
+    if (!targetClientId) {
+      setShowOAuthGuide(true);
+      setFeedback({
+        tone: 'error',
+        message:
+          '먼저 아래에 Google OAuth 클라이언트 ID를 입력해 주세요. (발급 가이드를 열었습니다)',
+      });
+      return;
+    }
+
+    setIsBusy(true);
+    setFeedback({
+      tone: 'info',
+      message: 'Google 계정 로그인 및 전용 시트·영수증 폴더를 준비하는 중...',
+    });
+    try {
+      const res = await onGoogleSignIn(targetClientId);
+      if (res.autoBackedUp) {
+        setFeedback({
+          tone: 'success',
+          message: `[${res.session.email}] 연결 완료! 구글 드라이브에 시트(5개 탭)와 영수증 폴더를 자동 생성하고 전체 데이터를 백업했습니다.`,
+        });
+      } else {
+        setFeedback({
+          tone: 'success',
+          message: `[${res.session.email}] 연결 완료! 기존 구글 시트를 찾았습니다. [시트에서 불러오기] 또는 [시트로 지금 백업]을 선택해 주세요.`,
+        });
+      }
+    } catch (e) {
+      setFeedback({
+        tone: 'error',
+        message:
+          e instanceof Error
+            ? e.message
+            : '구글 로그인 중 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleClickGooglePush = async () => {
+    setIsBusy(true);
+    setFeedback({
+      tone: 'info',
+      message:
+        '장부·영수증·목장·연간예산안·청구서를 구글 시트와 드라이브에 백업하는 중...',
+    });
+    try {
+      await onGooglePushAll();
+      setFeedback({
+        tone: 'success',
+        message: '모든 탭의 데이터와 영수증이 구글 시트·드라이브에 백업되었습니다.',
+      });
+    } catch (e) {
+      setFeedback({
+        tone: 'error',
+        message:
+          e instanceof Error ? e.message : '구글 시트 백업 중 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleClickGooglePull = async () => {
+    setIsBusy(true);
+    setFeedback({
+      tone: 'info',
+      message: '구글 시트에서 전체 데이터를 불러오는 중...',
+    });
+    try {
+      const counts = await onGooglePullAll();
+      setFeedback({
+        tone: 'success',
+        message: `시트 복원 완료 · 장부 ${counts.transactionCount}건, 목장 ${counts.mokjangCount}개, 연간예산 ${counts.annualBudgetCount}건, 청구서 ${counts.retreatBudgetCount}건`,
+      });
+    } catch (e) {
+      setFeedback({
+        tone: 'error',
+        message:
+          e instanceof Error
+            ? e.message
+            : '구글 시트 불러오기 중 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  // =========================================================================
+  // Gemini AI 모델 조회 및 고정
+  // =========================================================================
   const handleFetchAvailableModels = async () => {
     const cleanKey = sanitizeGeminiApiKey(geminiKeyInput);
     if (!cleanKey) {
@@ -166,18 +318,14 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     setIsFetchingModels(true);
     setFeedback({
       tone: 'info',
-      message:
-        'Google 서버에서 이 API 키로 사용 가능한 최신 Gemini 모델 목록을 불러오는 중...',
+      message: '사용 가능한 최신 Gemini 모델 목록을 불러오는 중...',
     });
 
     const result = await fetchAvailableGeminiModels(cleanKey);
     setIsFetchingModels(false);
 
     if (!result.ok) {
-      setFeedback({
-        tone: 'error',
-        message: result.message,
-      });
+      setFeedback({ tone: 'error', message: result.message });
       return;
     }
 
@@ -185,7 +333,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     setAvailableModels(result.models);
     setHasFetchedLiveModels(true);
 
-    // 기존 선택 모델이 조회된 가용 목록에 있으면 유지하고, 없으면 가장 적합한 1순위 모델 자동 선택
     const stillExists = result.models.some((m) => m.id === geminiModelInput);
     const nextSelectedModel = stillExists
       ? geminiModelInput
@@ -202,24 +349,15 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
 
     setFeedback({
       tone: 'success',
-      message: `${result.message} (자동 추천 선택: ${nextSelectedModel})`,
+      message: `${result.message} (자동 선택: ${nextSelectedModel})`,
     });
   };
 
-  /**
-   * Step 2: 목록에서 사용자가 선택한 모델을 실제 호출(generateContent)로 검증한 뒤 고정 저장합니다.
-   */
   const handleVerifyAndPinModel = async () => {
     const cleanKey = sanitizeGeminiApiKey(geminiKeyInput);
     if (!cleanKey) {
-      onSaveSettings({
-        ...settings,
-        geminiApiKey: '',
-      });
-      setFeedback({
-        tone: 'info',
-        message: 'Gemini API 키가 해제되었습니다.',
-      });
+      onSaveSettings({ ...settings, geminiApiKey: '' });
+      setFeedback({ tone: 'info', message: 'Gemini API 키가 해제되었습니다.' });
       return;
     }
 
@@ -227,7 +365,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     let currentModels = availableModels;
     let targetModel = geminiModelInput;
 
-    // 아직 실시간 모델 목록을 안 불러온 상태라면 먼저 모델 목록부터 조회하여 유효 모델 확인
     if (!hasFetchedLiveModels) {
       setFeedback({
         tone: 'info',
@@ -236,10 +373,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
       const listRes = await fetchAvailableGeminiModels(cleanKey);
       if (!listRes.ok) {
         setIsTestingModel(false);
-        setFeedback({
-          tone: 'error',
-          message: listRes.message,
-        });
+        setFeedback({ tone: 'error', message: listRes.message });
         return;
       }
       currentModels = listRes.models;
@@ -255,7 +389,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
 
     setFeedback({
       tone: 'info',
-      message: `[${targetModel}] 모델로 실제 응답 테스트 및 고정을 진행하는 중...`,
+      message: `[${targetModel}] 모델 응답 테스트 및 고정 중...`,
     });
 
     const verifyResult = await testGeminiConnection(cleanKey, targetModel);
@@ -270,61 +404,36 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         geminiModel: verifyResult.verifiedModel,
         availableGeminiModels: currentModels,
       });
-      setFeedback({
-        tone: 'success',
-        message: verifyResult.message,
-      });
+      setFeedback({ tone: 'success', message: verifyResult.message });
     } else {
-      setFeedback({
-        tone: 'error',
-        message: verifyResult.message,
-      });
-    }
-  };
-
-  const handleCopyCode = async () => {
-    try {
-      await navigator.clipboard.writeText(GAS_CODE_TEMPLATE);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = GAS_CODE_TEMPLATE;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
+      setFeedback({ tone: 'error', message: verifyResult.message });
     }
   };
 
   const handleSaveBasic = () => {
     onSaveSettings({
       ...settings,
+      googleClientId: clientIdInput.trim(),
       gasWebAppUrl: urlInput.trim(),
       departmentName: deptInput.trim() || '은혜교회 청년부',
       authorName: authorInput.trim() || '김송연',
     });
     setFeedback({
       tone: 'success',
-      message: '✅ 부서 정보 및 구글 시트 웹 앱 URL 설정이 저장되었습니다.',
+      message: '기본 정보가 저장되었습니다.',
     });
   };
 
-  const handlePush = async () => {
+  const handleLegacyGasPush = async () => {
     if (!urlInput.trim()) {
       setFeedback({
         tone: 'error',
-        message: '먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.',
+        message: 'Google Apps Script 웹 앱 URL을 입력해 주세요.',
       });
       return;
     }
     setIsBusy(true);
-    setFeedback({
-      tone: 'info',
-      message: '구글 시트 및 드라이브로 데이터를 업로드하는 중...',
-    });
+    setFeedback({ tone: 'info', message: 'Apps Script로 업로드하는 중...' });
     try {
       onSaveSettings({
         ...settings,
@@ -333,15 +442,12 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         authorName: authorInput.trim() || '김송연',
       });
       await onPushAllToGas(urlInput.trim());
-      setFeedback({
-        tone: 'success',
-        message: '✅ 구글 시트 & 드라이브 동기화 업로드가 완료되었습니다.',
-      });
+      setFeedback({ tone: 'success', message: '업로드가 완료되었습니다.' });
     } catch (e) {
       setFeedback({
         tone: 'error',
-        message: `동기화 실패: ${
-          e instanceof Error ? e.message : 'URL 및 배포 권한을 확인하세요.'
+        message: `업로드 실패: ${
+          e instanceof Error ? e.message : 'URL을 확인하세요.'
         }`,
       });
     } finally {
@@ -349,34 +455,25 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     }
   };
 
-  const handlePull = async () => {
+  const handleLegacyGasPull = async () => {
     if (!urlInput.trim()) {
       setFeedback({
         tone: 'error',
-        message: '먼저 Google Apps Script 웹 앱 URL을 입력해 주세요.',
+        message: 'Google Apps Script 웹 앱 URL을 입력해 주세요.',
       });
       return;
     }
     setIsBusy(true);
-    setFeedback({
-      tone: 'info',
-      message: '구글 시트에서 데이터를 불러오는 중...',
-    });
+    setFeedback({ tone: 'info', message: 'Apps Script에서 불러오는 중...' });
     try {
-      onSaveSettings({
-        ...settings,
-        gasWebAppUrl: urlInput.trim(),
-      });
+      onSaveSettings({ ...settings, gasWebAppUrl: urlInput.trim() });
       await onPullFromGas(urlInput.trim());
-      setFeedback({
-        tone: 'success',
-        message: '✅ 구글 시트에서 최신 데이터를 성공적으로 불러왔습니다.',
-      });
+      setFeedback({ tone: 'success', message: '데이터를 불러왔습니다.' });
     } catch (e) {
       setFeedback({
         tone: 'error',
         message: `불러오기 실패: ${
-          e instanceof Error ? e.message : 'URL 및 배포 권한을 확인하세요.'
+          e instanceof Error ? e.message : 'URL을 확인하세요.'
         }`,
       });
     } finally {
@@ -388,21 +485,17 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     Boolean(settings.geminiApiKey?.trim()) &&
     settings.geminiModel === geminiModelInput;
 
+  const hasLinkedSheet = Boolean(settings.googleSpreadsheetUrl);
+
   return (
-    <TdsDialog
-      open={open}
-      onClose={onClose}
-      title="설정"
-      variant="modal"
-    >
+    <TdsDialog open={open} onClose={onClose} title="설정" variant="modal">
       <div className="space-y-5">
-        {/* 상단 탭 전환 (4개 탭) */}
-        <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1">
+        {/* 상단 탭 전환 (3개 핵심 탭) */}
+        <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-3 gap-1">
           {[
+            { id: 'connection', label: '🟢 구글 시트 백업' },
             { id: 'gemini', label: '✨ AI 연결' },
-            { id: 'connection', label: '🟢 시트 연동' },
-            { id: 'code_gs', label: '📋 스크립트 복사' },
-            { id: 'backup', label: '🚀 초기화·백업' },
+            { id: 'backup', label: '🚀 초기화·내보내기' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -422,7 +515,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
           ))}
         </div>
 
-        {/* 상단 고정 피드백 배너 (성공 / 실패 / 진행 중 상태가 사라지지 않고 명확히 표시됨) */}
+        {/* 상단 고정 피드백 배너 */}
         {feedback && (
           <div
             className={`px-4 py-3.5 rounded-2xl text-[13px] font-semibold flex items-start gap-2.5 ${
@@ -447,7 +540,387 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         )}
 
         {/* =================================================================
-            탭 1: Gemini AI 영수증 자동 판독기 연결 (가용 모델 실시간 조회 + 선택 고정)
+            탭 1: 구글 계정 로그인 · 시트 자동 생성 & 일원화 백업
+           ================================================================= */}
+        {activeTab === 'connection' && (
+          <div className="space-y-4">
+            {/* 메인 Google 계정 통합 백업 카드 */}
+            <div className="bg-[#F9FAFB] rounded-2xl p-5 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[15px] font-bold text-[#191F28]">
+                    구글 시트 원클릭 통합 백업
+                  </div>
+                  <p className="text-[12px] text-[#4E5968] mt-0.5">
+                    구글 계정 로그인 한 번으로 드라이브에 전용 시트(장부·목장·예산안·청구서·설정)와 영수증 폴더를 자동 생성하고 관리합니다.
+                  </p>
+                </div>
+                {hasLinkedSheet && (
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 ${
+                      googleSession
+                        ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                        : 'bg-[#FFF8E6] text-[#B45309]'
+                    }`}
+                  >
+                    {googleSession ? '연결됨' : '재로그인 필요'}
+                  </span>
+                )}
+              </div>
+
+              {/* 연결된 계정 & 시트/폴더 바로 열기 카드 */}
+              {hasLinkedSheet && (
+                <div className="bg-[#FFFFFF] rounded-2xl p-4 space-y-3 border border-[#E5E8EB]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[13.5px] font-bold text-[#191F28] truncate">
+                        {settings.googleAccountName || '연결된 구글 계정'}
+                      </div>
+                      <div className="text-[12px] text-[#8B95A1] truncate">
+                        {settings.googleAccountEmail}
+                      </div>
+                    </div>
+                    {settings.lastSyncedAt && (
+                      <span className="text-[11px] text-[#8B95A1] tabular-nums">
+                        최근 백업:{' '}
+                        {new Date(settings.lastSyncedAt).toLocaleString(
+                          'ko-KR',
+                          {
+                            month: 'numeric',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          }
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 시트 & 영수증 폴더 원클릭 바로 열기 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <a
+                      href={settings.googleSpreadsheetUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="h-10 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center justify-center gap-1.5 hover:underline"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                      <span>내 구글 시트 열기</span>
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    </a>
+
+                    {settings.googleReceiptFolderUrl && (
+                      <a
+                        href={settings.googleReceiptFolderUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="h-10 px-3 rounded-xl bg-[#F2F4F6] text-[#191F28] text-[12.5px] font-bold flex items-center justify-center gap-1.5 hover:bg-[#E5E8EB]"
+                      >
+                        <FolderOpen className="w-4 h-4 text-[#3182F6] shrink-0" />
+                        <span>영수증 폴더 열기</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-[#8B95A1] shrink-0" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* 백업 / 불러오기 / 재로그인 액션 */}
+                  {googleSession ? (
+                    <div className="space-y-2.5 pt-1">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={handleClickGooglePush}
+                          className="h-10 px-3 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] disabled:opacity-50"
+                        >
+                          <CloudUpload className="w-4 h-4" />
+                          <span>시트로 지금 백업</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={handleClickGooglePull}
+                          className="h-10 px-3 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] disabled:opacity-50"
+                        >
+                          <CloudDownload className="w-4 h-4" />
+                          <span>시트에서 불러오기</span>
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <label className="flex items-center gap-2 text-[12.5px] font-semibold text-[#4E5968] cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={settings.googleAutoSync !== false}
+                            onChange={(e) =>
+                              onSaveSettings({
+                                ...settings,
+                                googleAutoSync: e.target.checked,
+                              })
+                            }
+                            className="w-4 h-4 accent-[#3182F6] rounded"
+                          />
+                          <span>변경 시 구글 시트 자동 백업</span>
+                        </label>
+
+                        <div className="flex items-center gap-3 text-[12px]">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={handleClickGoogleSignIn}
+                            className="font-semibold text-[#4E5968] hover:text-[#191F28]"
+                          >
+                            계정 전환
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onGoogleSignOut(true);
+                              setFeedback({
+                                tone: 'info',
+                                message: '구글 시트 연결이 해제되었습니다.',
+                              });
+                            }}
+                            className="font-semibold text-[#F04452] flex items-center gap-1 hover:underline"
+                          >
+                            <LogOut className="w-3.5 h-3.5" />
+                            <span>연결 해제</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={handleClickGoogleSignIn}
+                        className="flex-1 h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] disabled:opacity-50"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>Google 계정 다시 로그인</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onGoogleSignOut(true);
+                          setFeedback({
+                            tone: 'info',
+                            message: '구글 시트 연결이 해제되었습니다.',
+                          });
+                        }}
+                        className="h-10 px-3 rounded-xl bg-[#F2F4F6] text-[#F04452] text-[12px] font-semibold"
+                      >
+                        연결 해제
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 최초 연결 버튼 (미연결 시) */}
+              {!hasLinkedSheet && (
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleClickGoogleSignIn}
+                  className="w-full h-12 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all disabled:opacity-50"
+                >
+                  {isBusy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <LogIn className="w-4 h-4" />
+                  )}
+                  <span>Google 계정으로 로그인 · 시트 자동 생성</span>
+                </button>
+              )}
+
+              {/* OAuth 클라이언트 ID 입력 (내장 ID가 없거나 직접 변경할 때) */}
+              {!BUILTIN_GOOGLE_CLIENT_ID && (
+                <div className="space-y-2 pt-2 border-t border-[#E5E8EB]">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[12px] font-bold text-[#4E5968]">
+                      Google OAuth 클라이언트 ID (최초 1회 등록)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowOAuthGuide((p) => !p)}
+                      className="text-[12px] font-bold text-[#3182F6] flex items-center gap-0.5 hover:underline"
+                    >
+                      <span>발급 방법 3분 가이드</span>
+                      {showOAuthGuide ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={clientIdInput}
+                    onChange={(e) => setClientIdInput(e.target.value)}
+                    placeholder="1234567890-xxxx.apps.googleusercontent.com"
+                    className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13px] font-mono text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                  />
+
+                  {showOAuthGuide && (
+                    <div className="bg-[#FFFFFF] rounded-xl p-3.5 space-y-2 text-[12px] text-[#4E5968] leading-relaxed border border-[#E5E8EB]">
+                      <div className="font-bold text-[#191F28]">
+                        Google Cloud OAuth 클라이언트 ID 발급 (최초 1회 · 무료)
+                      </div>
+                      <ol className="list-decimal pl-4 space-y-1.5">
+                        <li>
+                          <a
+                            href="https://console.cloud.google.com/apis/library"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[#3182F6] font-bold hover:underline"
+                          >
+                            Google Cloud Console ↗
+                          </a>
+                          에서 새 프로젝트를 만들고, 라이브러리에서{' '}
+                          <strong>Google Sheets API</strong>와{' '}
+                          <strong>Google Drive API</strong> 2개를 [사용] 설정합니다.
+                        </li>
+                        <li>
+                          좌측 <strong>[Google Auth Platform → 대상(Audience)]</strong>에서
+                          외부(External) 선택 후 <strong>[앱 게시(프로덕션)]</strong>을 누릅니다.
+                        </li>
+                        <li>
+                          <strong>[클라이언트 → 클라이언트 만들기]</strong>에서 유형을{' '}
+                          <strong>웹 애플리케이션</strong>으로 선택하고,{' '}
+                          <strong>승인된 자바스크립트 원본</strong>에 아래 주소를 추가합니다:
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <code className="px-2 py-1 rounded bg-[#F2F4F6] text-[#191F28] font-mono text-[11.5px] select-all">
+                              {currentOrigin}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleCopyText(currentOrigin, () => {
+                                  setCopiedOrigin(true);
+                                  setTimeout(() => setCopiedOrigin(false), 2000);
+                                })
+                              }
+                              className="px-2 py-1 rounded bg-[#E8F3FF] text-[#1B64DA] text-[11px] font-bold"
+                            >
+                              {copiedOrigin ? '복사됨' : '주소 복사'}
+                            </button>
+                          </div>
+                        </li>
+                        <li>
+                          생성된 <strong>클라이언트 ID</strong>(<code>...apps.googleusercontent.com</code>)를 위 칸에 붙여넣고 로그인하면 끝!
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 부서 기본 정보 */}
+            <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    청년부 소속 명칭 (인쇄 표기)
+                  </label>
+                  <input
+                    type="text"
+                    value={deptInput}
+                    onChange={(e) => setDeptInput(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    회계 담당자 성명
+                  </label>
+                  <input
+                    type="text"
+                    value={authorInput}
+                    onChange={(e) => setAuthorInput(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] focus:outline-none"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveBasic}
+                className="px-4 py-2 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12.5px] font-bold active:scale-[0.97]"
+              >
+                기본 정보 저장
+              </button>
+            </div>
+
+            {/* 구버전 Apps Script 연결 (접이식) */}
+            <div className="bg-[#F9FAFB] rounded-2xl p-4">
+              <button
+                type="button"
+                onClick={() => setShowLegacyGas((p) => !p)}
+                className="w-full flex items-center justify-between text-[12.5px] font-semibold text-[#8B95A1]"
+              >
+                <span>고급: Apps Script 웹 앱 URL 직접 연동</span>
+                {showLegacyGas ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+
+              {showLegacyGas && (
+                <div className="mt-3 pt-3 border-t border-[#E5E8EB] space-y-3">
+                  <input
+                    type="url"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13px] text-[#191F28] focus:outline-none"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={handleLegacyGasPush}
+                      className="px-3 py-2 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold"
+                    >
+                      업로드
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={handleLegacyGasPull}
+                      className="px-3 py-2 rounded-xl bg-[#E5E8EB] text-[#191F28] text-[12px] font-bold"
+                    >
+                      불러오기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyText(GAS_CODE_TEMPLATE, () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1"
+                    >
+                      {copied ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>{copied ? '복사됨' : 'Code.gs 복사'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================
+            탭 2: Gemini AI 영수증 스캐너 연결
            ================================================================= */}
         {activeTab === 'gemini' && (
           <div className="space-y-4">
@@ -470,7 +943,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 </a>
               </div>
 
-              {/* 현재 고정된 상태 배지 */}
               {settings.geminiApiKey && (
                 <div className="bg-[#FFFFFF] rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-[12.5px]">
@@ -485,10 +957,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     type="button"
                     onClick={() => {
                       setGeminiKeyInput('');
-                      onSaveSettings({
-                        ...settings,
-                        geminiApiKey: '',
-                      });
+                      onSaveSettings({ ...settings, geminiApiKey: '' });
                       setFeedback({
                         tone: 'info',
                         message: '저장된 Gemini API 키가 삭제되었습니다.',
@@ -501,7 +970,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 </div>
               )}
 
-              {/* Step 1: API 키 입력 및 모델 목록 실시간 조회 */}
               <div className="space-y-2">
                 <label className="block text-[12.5px] font-bold text-[#191F28]">
                   1. API 키 입력
@@ -532,7 +1000,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     type="button"
                     disabled={isFetchingModels || isTestingModel}
                     onClick={handleFetchAvailableModels}
-                    className="h-11 px-4 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150 disabled:opacity-50"
+                    className="h-11 px-4 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[13px] font-bold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] disabled:opacity-50"
                   >
                     {isFetchingModels ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -544,7 +1012,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Step 2: 읽어온 모델 목록 중에서 선택 및 고정 */}
               <div className="space-y-2.5 pt-2 border-t border-[#E5E8EB]">
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-[12.5px] font-bold text-[#191F28]">
@@ -557,7 +1024,6 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   )}
                 </div>
 
-                {/* 드롭다운 선택기 (전체 모델 빠른 탐색용) */}
                 <select
                   value={geminiModelInput}
                   onChange={(e) => setGeminiModelInput(e.target.value)}
@@ -570,8 +1036,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   ))}
                 </select>
 
-                {/* 상위 가용 모델 원터치 선택 카드 리스트 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[210px] overflow-y-auto pr-0.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-0.5">
                   {availableModels.map((m, idx) => {
                     const selected = geminiModelInput === m.id;
                     const pinned =
@@ -583,7 +1048,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                         key={m.id}
                         type="button"
                         onClick={() => setGeminiModelInput(m.id)}
-                        className={`p-3 rounded-xl text-left transition-all duration-150 flex items-start justify-between gap-2 ${
+                        className={`p-3 rounded-xl text-left transition-all flex items-start justify-between gap-2 ${
                           selected
                             ? 'bg-[#3182F6] text-[#FFFFFF]'
                             : 'bg-[#FFFFFF] text-[#191F28] hover:bg-[#E5E8EB]/60'
@@ -636,21 +1101,20 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     type="button"
                     disabled={isTestingModel || isFetchingModels}
                     onClick={handleVerifyAndPinModel}
-                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 disabled:opacity-50"
+                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] disabled:opacity-50"
                   >
                     {isTestingModel ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <Pin className="w-4 h-4" />
                     )}
-                    <span>
-                      2. [{geminiModelInput}] 모델 검증 및 고정 저장하기
-                    </span>
+                    <span>[{geminiModelInput}] 검증 및 고정 저장</span>
                   </button>
 
                   {isPinnedModel && (
                     <span className="text-[12px] font-bold text-[#1B64DA] flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" />이 모델로 고정되어 작동 중입니다
+                      <CheckCircle2 className="w-4 h-4" />
+                      고정 작동 중
                     </span>
                   )}
                 </div>
@@ -660,131 +1124,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         )}
 
         {/* =================================================================
-            탭 2: 구글 시트 & 드라이브 웹 앱 URL 연동
-           ================================================================= */}
-        {activeTab === 'connection' && (
-          <div className="space-y-4">
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
-              <div>
-                <label className="block text-[13px] font-bold text-[#191F28] mb-1">
-                  Google Apps Script 웹 앱 URL
-                </label>
-                <p className="text-[12px] text-[#8B95A1] mb-2">
-                  연결해 두면 내 폰과 맥북에서 언제나 동일한 장부와 영수증 사진이 실시간 동기화됩니다.
-                </p>
-                <input
-                  type="url"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    청년부 소속 명칭 (인쇄 문서 표기)
-                  </label>
-                  <input
-                    type="text"
-                    value={deptInput}
-                    onChange={(e) => setDeptInput(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    회계 담당자 성명
-                  </label>
-                  <input
-                    type="text"
-                    value={authorInput}
-                    onChange={(e) => setAuthorInput(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleSaveBasic}
-                  disabled={isBusy}
-                  className="px-4 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold active:scale-[0.97] transition-all duration-150"
-                >
-                  설정 저장하기
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePush}
-                  disabled={isBusy}
-                  className="px-4 py-2.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
-                >
-                  <CloudUpload className="w-4 h-4" />
-                  현재 데이터 시트로 전체 업로드
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePull}
-                  disabled={isBusy}
-                  className="px-4 py-2.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
-                >
-                  <CloudDownload className="w-4 h-4" />
-                  시트에서 데이터 불러오기
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =================================================================
-            탭 3: Code.gs 전문 및 복사 버튼
-           ================================================================= */}
-        {activeTab === 'code_gs' && (
-          <div className="space-y-3">
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <div className="text-[14px] font-bold text-[#191F28]">
-                  복사해서 바로 쓰는 완성본 Code.gs
-                </div>
-                <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                  구글 스프레드시트 [확장 프로그램 &gt; Apps Script]에 붙여넣고 [새 배포 &gt; 웹 앱]으로 배포하세요.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleCopyCode}
-                className={`px-4 py-2.5 rounded-xl text-[13px] font-semibold flex items-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150 ${
-                  copied
-                    ? 'bg-[#191F28] text-[#FFFFFF]'
-                    : 'bg-[#3182F6] text-[#FFFFFF]'
-                }`}
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    복사 완료!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4" />
-                    Code.gs 전체 코드 복사
-                  </>
-                )}
-              </button>
-            </div>
-
-            <pre className="bg-[#F9FAFB] text-[#191F28] p-4 rounded-2xl text-[11.5px] leading-relaxed overflow-x-auto max-h-[340px] font-mono select-all">
-              {GAS_CODE_TEMPLATE}
-            </pre>
-          </div>
-        )}
-
-        {/* =================================================================
-            탭 4: 전체 데이터 일괄 백업 · 복원 · 완전 초기화
+            탭 3: 전체 데이터 초기화 · 내보내기
            ================================================================= */}
         {activeTab === 'backup' && (
           <div className="space-y-3">
@@ -821,61 +1161,38 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
               </div>
             </div>
 
-            {/* 1. 전체 데이터 일괄 JSON 백업 & 복원 */}
+            {/* 구글 시트 일원화 백업 바로가기 */}
             <div className="bg-[#E8F3FF] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <div className="text-[14px] font-bold text-[#1B64DA]">
-                  전체 데이터 일괄 백업 · 복원 (JSON)
+                  구글 시트 통합 백업
                 </div>
                 <div className="text-[12px] text-[#4E5968] mt-0.5">
-                  장부·영수증·목장·연간예산안·청구서·결재선 설정을 한 파일로 저장하고 복원합니다.
+                  어려운 파일 관리 없이 장부·영수증·목장·예산안을 구글 시트 한 곳에 백업하세요.
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <input
-                  ref={jsonInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const res = await onImportJson(file);
-                      setFeedback({
-                        tone: res.ok ? 'success' : 'error',
-                        message: res.message,
-                      });
-                      e.target.value = '';
-                    }
-                  }}
-                  className="hidden"
-                />
+              {googleSession && hasLinkedSheet ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    onExportJson();
-                    setFeedback({
-                      tone: 'success',
-                      message:
-                        '전체 데이터(장부·목장·예산안·청구서·설정) 백업 파일이 저장되었습니다.',
-                    });
-                  }}
-                  className="px-3.5 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
+                  disabled={isBusy}
+                  onClick={handleClickGooglePush}
+                  className="px-4 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold flex items-center gap-1.5 shrink-0 active:scale-[0.97]"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>전체 백업</span>
+                  <CloudUpload className="w-4 h-4" />
+                  <span>지금 시트로 백업</span>
                 </button>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => jsonInputRef.current?.click()}
-                  className="px-3.5 py-2.5 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[12.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
+                  onClick={() => setActiveTab('connection')}
+                  className="px-4 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold shrink-0 active:scale-[0.97]"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>전체 복원</span>
+                  구글 시트 연결하기 →
                 </button>
-              </div>
+              )}
             </div>
 
-            {/* 2. 전체 데이터 일괄 초기화 */}
+            {/* 전체 데이터 일괄 초기화 */}
             <div className="bg-[#FFEEF0]/70 rounded-2xl p-4 space-y-3 border border-[#F04452]/20">
               <div>
                 <div className="text-[14px] font-bold text-[#F04452] flex items-center gap-1.5">
@@ -916,33 +1233,15 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   onChange={(e) => setKeepConnectionsOnReset(e.target.checked)}
                   className="w-4 h-4 accent-[#3182F6] rounded"
                 />
-                <span>
-                  AI API 키 · 구글 시트 URL · 부서명/결재선은 유지
-                </span>
+                <span>구글 시트 연결 · AI API 키 · 부서명/결재선은 유지</span>
               </label>
 
               {!confirmResetStep ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onExportJson();
-                      setFeedback({
-                        tone: 'info',
-                        message:
-                          '초기화 전 전체 백업 파일을 먼저 저장했습니다.',
-                      });
-                    }}
-                    className="px-3 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97]"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>초기화 전 백업 저장</span>
-                  </button>
-
+                <div className="flex justify-end pt-1">
                   <button
                     type="button"
                     onClick={() => setConfirmResetStep(true)}
-                    className="px-4 py-2 rounded-xl bg-[#F04452] text-[#FFFFFF] text-[13px] font-bold active:scale-[0.97] transition-all"
+                    className="px-4 py-2 rounded-xl bg-[#F04452] text-[#FFFFFF] text-[13px] font-bold active:scale-[0.97]"
                   >
                     전체 데이터 초기화
                   </button>
@@ -984,15 +1283,15 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
               )}
             </div>
 
-            {/* 3. 엑셀 CSV & 샘플 복원 */}
+            {/* CSV & 샘플 복원 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div className="bg-[#F9FAFB] rounded-2xl p-3.5 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-[13px] font-bold text-[#191F28]">
-                    월별 장부 CSV
+                    월별 장부 엑셀(CSV)
                   </div>
                   <div className="text-[11.5px] text-[#8B95A1]">
-                    엑셀 호환 파일 저장
+                    선택 월 내역 다운로드
                   </div>
                 </div>
                 <button
@@ -1031,6 +1330,65 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   <span>복원</span>
                 </button>
               </div>
+            </div>
+
+            {/* 오프라인 JSON 파일 백업/복원 (접이식 고급 메뉴) */}
+            <div className="bg-[#F9FAFB] rounded-2xl p-4">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedFileBackup((p) => !p)}
+                className="w-full flex items-center justify-between text-[12.5px] font-semibold text-[#8B95A1]"
+              >
+                <span>고급: 오프라인 백업 파일(JSON) 저장·복원</span>
+                {showAdvancedFileBackup ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+
+              {showAdvancedFileBackup && (
+                <div className="mt-3 pt-3 border-t border-[#E5E8EB] flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] text-[#4E5968]">
+                    구글 시트 없이 기기에 직접 백업 파일을 보관할 때 사용합니다.
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={jsonInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const res = await onImportJson(file);
+                          setFeedback({
+                            tone: res.ok ? 'success' : 'error',
+                            message: res.message,
+                          });
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={onExportJson}
+                      className="px-3 py-1.5 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[12px] font-semibold flex items-center gap-1"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>파일 저장</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => jsonInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>파일 복원</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

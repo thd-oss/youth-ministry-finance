@@ -104,6 +104,14 @@ export interface GeminiModelOption {
 
 export interface AppSettings {
   gasWebAppUrl: string;
+  googleClientId?: string;
+  googleAccountEmail?: string;
+  googleAccountName?: string;
+  googleSpreadsheetId?: string;
+  googleSpreadsheetUrl?: string;
+  googleReceiptFolderId?: string;
+  googleReceiptFolderUrl?: string;
+  googleAutoSync?: boolean;
   geminiApiKey: string;
   geminiModel: string;
   availableGeminiModels?: GeminiModelOption[];

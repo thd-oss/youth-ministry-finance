@@ -8,6 +8,14 @@ import { generateMockReceiptSvgDataUrl } from './imageCompressor';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   gasWebAppUrl: '',
+  googleClientId: '',
+  googleAccountEmail: '',
+  googleAccountName: '',
+  googleSpreadsheetId: '',
+  googleSpreadsheetUrl: '',
+  googleReceiptFolderId: '',
+  googleReceiptFolderUrl: '',
+  googleAutoSync: true,
   geminiApiKey: '',
   geminiModel: 'gemini-3-flash-preview',
   availableGeminiModels: [],
