@@ -122,7 +122,7 @@ export const SyncManager = {
   loadMokjangs(): MokjangGroup[] {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.MOKJANGS);
-      if (!raw) {
+      if (raw === null) {
         localStorage.setItem(
           STORAGE_KEYS.MOKJANGS,
           JSON.stringify(INITIAL_MOKJANG_GROUPS)
@@ -130,9 +130,7 @@ export const SyncManager = {
         return INITIAL_MOKJANG_GROUPS;
       }
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) && parsed.length > 0
-        ? parsed
-        : INITIAL_MOKJANG_GROUPS;
+      return Array.isArray(parsed) ? parsed : INITIAL_MOKJANG_GROUPS;
     } catch {
       return INITIAL_MOKJANG_GROUPS;
     }
@@ -203,15 +201,22 @@ export const SyncManager = {
   },
 
   /**
-   * 테스트용 샘플 내역을 모두 비우고 실제 청년부 회계 운영 모드로 깨끗하게 시작합니다.
+   * 모든 탭의 데이터(장부 거래·영수증 + 목장 현황 + 연간 예산안 + 수련회 청구서 + 커스텀 분류)를
+   * 일괄 초기화하여 깨끗한 실사용 상태로 전환합니다.
    */
-  startCleanProductionLedger(
+  resetAllDataClean(
     yearMonth: string,
-    initialCarryoverAmount = 0
+    initialCarryoverAmount = 0,
+    keepConnections = true
   ): {
     transactions: Transaction[];
+    budgets: BudgetsMap;
+    mokjangs: MokjangGroup[];
     settings: AppSettings;
   } {
+    const prevSettings = this.loadSettings();
+    const prevBudgets = this.loadBudgets();
+
     const cleanTransactions: Transaction[] =
       initialCarryoverAmount > 0
         ? [
@@ -221,8 +226,9 @@ export const SyncManager = {
               type: 'income',
               account: 'general',
               category: '전월이월',
-              title: '전월 이월금 (실제 장부 시작 잔액)',
-              memo: `${yearMonth} 실제 회계 장부 개시 이월금`,
+              subCategory: '전월 이월금',
+              title: '전월 이월금 (시작 잔액)',
+              memo: `${yearMonth} 회계 장부 개시 이월금`,
               amount: initialCarryoverAmount,
               paymentMethod: '계좌이체',
               createdAt: new Date().toISOString(),
@@ -230,21 +236,103 @@ export const SyncManager = {
           ]
         : [];
 
-    const nextSettings: AppSettings = {
-      ...this.loadSettings(),
-      isProductionMode: true,
+    const nextSettings: AppSettings = keepConnections
+      ? {
+          ...prevSettings,
+          customExpenseCategories: [],
+          customIncomeCategories: [],
+          isProductionMode: true,
+        }
+      : {
+          ...DEFAULT_SETTINGS,
+          customExpenseCategories: [],
+          customIncomeCategories: [],
+          isProductionMode: true,
+        };
+
+    const deptName = nextSettings.departmentName || '청년부';
+    const authorName = nextSettings.authorName || '';
+    const fiscalYear = Number(yearMonth.slice(0, 4)) || new Date().getFullYear();
+
+    const cleanBudgets: BudgetsMap = {
+      annual_budget: {
+        ...prevBudgets.annual_budget,
+        templateType: 'annual_budget',
+        fiscalYear,
+        title: `${fiscalYear}년도 ${deptName} 연간 예산 심의안`,
+        subtitle: '',
+        department: deptName,
+        eventName: `${fiscalYear}년 연간 사역 예산`,
+        eventPeriod: `${fiscalYear}년 1월 1일 ~ ${fiscalYear}년 12월 31일`,
+        eventLocation: '',
+        participants: '',
+        proposerName: authorName,
+        requestDate: `${yearMonth}-01`,
+        selfBurdenAmount: 0,
+        selfBurdenNote: '',
+        bankName: keepConnections ? prevBudgets.annual_budget.bankName : '',
+        accountNumber: keepConnections
+          ? prevBudgets.annual_budget.accountNumber
+          : '',
+        accountHolder: keepConnections
+          ? prevBudgets.annual_budget.accountHolder
+          : '',
+        items: [],
+      },
+      retreat_claim: {
+        ...prevBudgets.retreat_claim,
+        templateType: 'retreat_claim',
+        fiscalYear,
+        title: `${fiscalYear}년 ${deptName} 수련회·행사 재정 청구서`,
+        subtitle: '',
+        department: deptName,
+        eventName: '',
+        eventPeriod: '',
+        eventLocation: '',
+        participants: '',
+        proposerName: authorName,
+        requestDate: `${yearMonth}-01`,
+        selfBurdenAmount: 0,
+        selfBurdenNote: '',
+        bankName: keepConnections ? prevBudgets.retreat_claim.bankName : '',
+        accountNumber: keepConnections
+          ? prevBudgets.retreat_claim.accountNumber
+          : '',
+        accountHolder: keepConnections
+          ? prevBudgets.retreat_claim.accountHolder
+          : '',
+        items: [],
+      },
     };
+
+    const cleanMokjangs: MokjangGroup[] = [];
 
     localStorage.setItem(
       STORAGE_KEYS.TRANSACTIONS,
       JSON.stringify(cleanTransactions)
     );
+    localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(cleanBudgets));
+    localStorage.setItem(STORAGE_KEYS.MOKJANGS, JSON.stringify(cleanMokjangs));
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
 
     return {
       transactions: cleanTransactions,
+      budgets: cleanBudgets,
+      mokjangs: cleanMokjangs,
       settings: nextSettings,
     };
+  },
+
+  startCleanProductionLedger(
+    yearMonth: string,
+    initialCarryoverAmount = 0
+  ): {
+    transactions: Transaction[];
+    budgets: BudgetsMap;
+    mokjangs: MokjangGroup[];
+    settings: AppSettings;
+  } {
+    return this.resetAllDataClean(yearMonth, initialCarryoverAmount, true);
   },
 
   async pushTransactionToGas(
@@ -405,11 +493,24 @@ export const SyncManager = {
     mokjangs: MokjangGroup[];
     settings: AppSettings;
   }): void {
+    const safeSettings: AppSettings = {
+      ...data.settings,
+      geminiApiKey: '', // 개인 API 키는 백업 파일 유출 방지를 위해 제외
+    };
     const jsonStr = JSON.stringify(
       {
-        version: '2.0',
+        version: '3.0',
         exportedAt: new Date().toISOString(),
-        ...data,
+        summary: {
+          transactionCount: data.transactions.length,
+          mokjangCount: data.mokjangs.length,
+          annualBudgetItemCount: data.budgets.annual_budget.items.length,
+          retreatBudgetItemCount: data.budgets.retreat_claim.items.length,
+        },
+        transactions: data.transactions,
+        budgets: data.budgets,
+        mokjangs: data.mokjangs,
+        settings: safeSettings,
       },
       null,
       2
@@ -426,6 +527,57 @@ export const SyncManager = {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  },
+
+  parseAndValidateBackupJson(rawText: string):
+    | {
+        ok: true;
+        transactions: Transaction[];
+        budgets: Partial<BudgetsMap>;
+        mokjangs: MokjangGroup[] | null;
+        settings: Partial<AppSettings> | null;
+      }
+    | { ok: false; error: string } {
+    try {
+      const parsed = JSON.parse(rawText);
+      if (!parsed || typeof parsed !== 'object') {
+        return { ok: false, error: '올바른 JSON 백업 파일 형식이 아닙니다.' };
+      }
+
+      const hasAnySection =
+        Array.isArray(parsed.transactions) ||
+        Boolean(parsed.budgets) ||
+        Array.isArray(parsed.mokjangs) ||
+        Boolean(parsed.settings);
+
+      if (!hasAnySection) {
+        return {
+          ok: false,
+          error: '장부·예산안·목장 데이터가 포함되지 않은 파일입니다.',
+        };
+      }
+
+      return {
+        ok: true,
+        transactions: Array.isArray(parsed.transactions)
+          ? parsed.transactions
+          : [],
+        budgets:
+          parsed.budgets && typeof parsed.budgets === 'object'
+            ? parsed.budgets
+            : {},
+        mokjangs: Array.isArray(parsed.mokjangs) ? parsed.mokjangs : null,
+        settings:
+          parsed.settings && typeof parsed.settings === 'object'
+            ? parsed.settings
+            : null,
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'JSON 파일을 읽을 수 없습니다. 파일이 손상되었는지 확인하세요.',
+      };
+    }
   },
 };
 

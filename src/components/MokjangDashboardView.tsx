@@ -89,7 +89,6 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
   };
 
   const handleRemoveMokjang = (id: string) => {
-    if (mokjangs.length <= 1) return;
     if (selectedMokjangId === id) setSelectedMokjangId('all');
     onUpdateMokjangs(mokjangs.filter((m) => m.id !== id));
   };
@@ -372,15 +371,14 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                             }
                             className="text-[#8B95A1] text-[12px]"
                           />
-                          {mokjangs.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveMokjang(mj.id)}
-                              className="text-[#8B95A1] hover:text-[#F04452] p-1 shrink-0"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMokjang(mj.id)}
+                            aria-label="목장 삭제"
+                            className="text-[#8B95A1] hover:text-[#F04452] p-1 shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -395,7 +393,32 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
       {/* =====================================================================
           모드 A: 전체 목장 한눈에 보기 (selectedMokjangId === 'all')
          ===================================================================== */}
-      {selectedMokjangId === 'all' && (
+      {selectedMokjangId === 'all' && mokjangs.length === 0 && (
+        <section className="bg-[#FFFFFF] rounded-3xl p-10 text-center space-y-3">
+          <div className="w-12 h-12 rounded-full bg-[#F2F4F6] text-[#8B95A1] flex items-center justify-center mx-auto">
+            <Users className="w-6 h-6" />
+          </div>
+          <div className="text-[16px] font-bold text-[#191F28]">
+            등록된 목장이 없습니다
+          </div>
+          <div className="text-[13px] text-[#8B95A1]">
+            목장을 추가해 심방비와 회식·모임비 예산을 관리해 보세요.
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              handleAddMokjang();
+              setIsEditingSetup(true);
+            }}
+            className="h-10 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold inline-flex items-center gap-1.5 active:scale-[0.97]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>첫 목장 추가</span>
+          </button>
+        </section>
+      )}
+
+      {selectedMokjangId === 'all' && mokjangs.length > 0 && (
         <div className="space-y-5">
           {/* 전체 목장 총괄 Hero 카드 */}
           <section className="bg-[#FFFFFF] rounded-3xl p-6 space-y-5">

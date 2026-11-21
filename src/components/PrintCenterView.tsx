@@ -859,10 +859,10 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
           screenMode === 'mobile_inspector' ? 'hidden' : 'block'
         }`}
       >
-        {/* 문서 1: 월별 회계 결산 보고서 (A4 1장 칼맞춤) */}
+        {/* 문서 1: 월별 회계 결산 보고서 (다중 페이지 자연 분할 지원) */}
         {(outputMode === 'both' || outputMode === 'ledger_only') && (
           <A4ScalePreview zoomMode={a4ZoomMode}>
-            <article className="a4-page flex flex-col justify-between">
+            <article className="a4-page a4-page-flow flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between gap-4 pb-3 border-b-2 border-[#191F28]">
                   <div className="pt-1 min-w-0 flex-1">
@@ -1132,7 +1132,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
 
                 {/* 관/항별 지출 소계 요약 */}
                 {categoryBreakdown.length > 0 && (
-                  <div className="mt-3">
+                  <div className="mt-3 print-avoid-break">
                     <div className="text-[10.5px] font-bold text-[#4E5968] mb-1">
                       3. 관/항(카테고리)별 지출 집행 내역 요약 (연간 예산안 연동)
                     </div>
@@ -1162,7 +1162,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                 )}
               </div>
 
-              <div className="pt-3 border-t border-[#E5E8EB] flex items-center justify-between text-[11px] text-[#4E5968]">
+              <div className="pt-3 mt-4 border-t border-[#E5E8EB] flex items-center justify-between text-[11px] text-[#4E5968] print-avoid-break">
                 <div>
                   위와 같이 {yearMonthTitle} {settings.departmentName} 회계 결산 내역 및 별첨 영수증 증빙철을 보고합니다.
                 </div>
@@ -1178,7 +1178,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
         {(outputMode === 'both' || outputMode === 'receipts_only') &&
           receiptPages.map((pageItems, pageIdx) => (
             <A4ScalePreview key={pageIdx} zoomMode={a4ZoomMode}>
-              <article className="a4-page flex flex-col justify-between">
+              <article className="a4-page a4-page-receipt flex flex-col justify-between">
                 <div className="flex-1 flex flex-col">
                   <div className="flex items-center justify-between pb-2.5 border-b-2 border-[#191F28] mb-3.5">
                     <div>

@@ -1903,7 +1903,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
         }`}
       >
         <A4ScalePreview zoomMode={a4ZoomMode}>
-          <article className="a4-page flex flex-col justify-between">
+          <article className="a4-page a4-page-flow flex flex-col justify-between">
             <div>
               {/* 상단 문서 타이틀 & 우측 4칸 결재란 */}
               <div className="flex items-start justify-between gap-4 pb-3.5 border-b-2 border-[#191F28]">
@@ -2109,19 +2109,36 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   <tbody>
                     {expenseGroups.map((group) => (
                       <React.Fragment key={group.key}>
-                        {group.items.map((item, idx) => (
+                        {group.items.length >= 2 && (
+                          <tr className="bg-[#F2F4F6]/80 font-bold text-[11px] text-[#191F28] print-keep-with-next">
+                            <td
+                              colSpan={3}
+                              className="border border-[#191F28] py-1.5 px-2.5 text-left"
+                            >
+                              ■ {group.category}{' '}
+                              <span className="font-normal text-[#4E5968]">
+                                ({group.items.length}건 · 비중 {group.sharePercent}%)
+                              </span>
+                            </td>
+                            <td className="border border-[#191F28] py-1.5 px-2 text-right font-bold text-[#191F28]">
+                              {formatWon(group.subtotal)}
+                            </td>
+                            <td className="border border-[#191F28] py-1.5 px-2 text-center text-[10px] text-[#8B95A1]">
+                              분류 소계
+                            </td>
+                          </tr>
+                        )}
+
+                        {group.items.map((item) => (
                           <tr key={item.id}>
-                            {idx === 0 && (
-                              <td
-                                rowSpan={group.items.length}
-                                className="border border-[#191F28] bg-[#F9FAFB]/70 p-2 text-center font-bold text-[#191F28] align-middle whitespace-pre-wrap break-words [word-break:keep-all]"
-                              >
-                                <div>{group.category}</div>
+                            <td className="border border-[#E5E8EB] border-l-[#191F28] bg-[#F9FAFB]/50 p-1.5 text-center font-semibold text-[#4E5968] align-top whitespace-pre-wrap break-words [word-break:keep-all]">
+                              <div>{group.category}</div>
+                              {group.items.length === 1 && (
                                 <div className="text-[9.5px] font-normal text-[#8B95A1] mt-0.5">
                                   ({group.sharePercent}%)
                                 </div>
-                              </td>
-                            )}
+                              )}
+                            </td>
                             <td className="border border-[#E5E8EB] p-1.5 align-top space-y-0.5">
                               <AutoResizeTextarea
                                 value={item.subCategory || ''}
@@ -2205,51 +2222,34 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                             </td>
                           </tr>
                         ))}
-
-                        {/* 2건 이상 묶인 그룹은 사역별 소계 행 자동 출력 */}
-                        {group.items.length >= 2 && (
-                          <tr className="bg-[#F9FAFB] font-semibold text-[11px]">
-                            <td
-                              colSpan={3}
-                              className="border border-[#191F28] py-1.5 px-2.5 text-right text-[#4E5968]"
-                            >
-                              [{group.category}] 소계 ({group.items.length}건)
-                            </td>
-                            <td className="border border-[#191F28] py-1.5 px-2 text-right font-bold text-[#191F28]">
-                              {formatWon(group.subtotal)}
-                            </td>
-                            <td className="border border-[#191F28] py-1.5 px-2 text-center text-[10px] text-[#8B95A1]">
-                              비중 {group.sharePercent}%
-                            </td>
-                          </tr>
-                        )}
                       </React.Fragment>
                     ))}
 
-                    {/* 수입 예산 항목이 있는 경우 별도 구분 출력 */}
+                    {/* 수입 예산 항목이 있는 경우 별도 구분 출력 (rowSpan 없이 페이지 분할 안전) */}
                     {incomeGroups.length > 0 && (
                       <>
-                        <tr className="bg-[#E8F3FF]/60 font-bold text-[11px] text-[#1B64DA]">
+                        <tr className="bg-[#E8F3FF]/70 font-bold text-[11px] text-[#1B64DA] print-keep-with-next">
                           <td
-                            colSpan={5}
+                            colSpan={3}
                             className="border border-[#191F28] py-1.5 px-2.5 text-left"
                           >
                             [별도 수입 예산 항목]
                           </td>
+                          <td className="border border-[#191F28] py-1.5 px-2 text-right font-bold text-[#1B64DA]">
+                            +{formatWon(totalIncome)}
+                          </td>
+                          <td className="border border-[#191F28] py-1.5 px-2 text-center text-[10px] text-[#1B64DA]">
+                            수입 합계
+                          </td>
                         </tr>
                         {incomeGroups.map((group) => (
                           <React.Fragment key={group.key}>
-                            {group.items.map((item, idx) => (
+                            {group.items.map((item) => (
                               <tr key={item.id}>
-                                {idx === 0 && (
-                                  <td
-                                    rowSpan={group.items.length}
-                                    className="border border-[#191F28] bg-[#F9FAFB]/70 p-2 text-center font-bold text-[#1B64DA] align-middle"
-                                  >
-                                    {group.category}
-                                  </td>
-                                )}
-                                <td className="border border-[#E5E8EB] p-1.5 align-top">
+                                <td className="border border-[#E5E8EB] border-l-[#191F28] bg-[#F9FAFB]/50 p-1.5 text-center font-semibold text-[#1B64DA] align-top whitespace-pre-wrap break-words [word-break:keep-all]">
+                                  {group.category}
+                                </td>
+                                <td className="border border-[#E5E8EB] p-1.5 align-top whitespace-pre-wrap break-words [word-break:keep-all]">
                                   <div className="font-bold text-[#191F28]">
                                     {item.subCategory || item.itemName}
                                   </div>
@@ -2259,13 +2259,13 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                     </div>
                                   )}
                                 </td>
-                                <td className="border border-[#E5E8EB] p-1.5 align-top text-[#4E5968]">
+                                <td className="border border-[#E5E8EB] p-1.5 align-top text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all]">
                                   {item.formula}
                                 </td>
                                 <td className="border border-[#E5E8EB] p-1.5 align-top text-right font-bold text-[#3182F6]">
                                   +{formatNumber(item.amount)}
                                 </td>
-                                <td className="border border-[#E5E8EB] border-r-[#191F28] p-1.5 align-top text-center text-[11px] text-[#4E5968]">
+                                <td className="border border-[#E5E8EB] border-r-[#191F28] p-1.5 align-top text-center text-[11px] text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all]">
                                   {item.note || '-'}
                                 </td>
                               </tr>
@@ -2350,7 +2350,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               </div>
 
               {/* 3. 입금 계좌 정보 */}
-              <div className="mt-4">
+              <div className="mt-4 print-avoid-break">
                 <div className="text-[11.5px] font-bold text-[#191F28] mb-1">
                   3. 예산 수령 지정 입금 계좌 정보
                 </div>
@@ -2400,7 +2400,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
 
             {/* 하단 청구 문구 및 청구인 서명란 */}
-            <div className="pt-4 mt-4 border-t border-[#191F28] space-y-4">
+            <div className="pt-4 mt-4 border-t border-[#191F28] space-y-4 print-avoid-break">
               <AutoResizeTextarea
                 value={doc.purposeNote}
                 onChange={(e) =>

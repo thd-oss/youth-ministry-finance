@@ -21,6 +21,50 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Auto-growing Textarea (CSS field-sizing: content + CSS Grid Mirror Fallback + Print Safe) */
+.growable-textarea {
+  display: block;
+  width: 100%;
+}
+
+.growable-textarea-mirror {
+  display: none;
+}
+
+.growable-textarea-input {
+  field-sizing: content;
+  width: 100%;
+  height: auto;
+  min-block-size: 1.4em;
+  resize: none;
+  overflow: hidden;
+}
+
+@supports not (field-sizing: content) {
+  .growable-textarea {
+    display: grid;
+  }
+
+  .growable-textarea-mirror,
+  .growable-textarea-input {
+    grid-area: 1 / 1 / 2 / 2;
+    width: 100%;
+  }
+
+  .growable-textarea-mirror {
+    display: block;
+    visibility: hidden;
+    pointer-events: none;
+    min-block-size: 1.4em;
+  }
+
+  .growable-textarea-input {
+    height: 100%;
+    resize: none;
+    overflow: hidden;
+  }
+}
+
 /* Native Dialog & Bottom Sheet Styles */
 dialog.tds-bottom-sheet {
   margin: auto auto 0 auto;
@@ -63,7 +107,7 @@ dialog::backdrop {
 .a4-page {
   width: 210mm;
   min-height: 297mm;
-  padding: 15mm;
+  padding: 14mm;
   margin: 0 auto;
   box-sizing: border-box;
   background: #FFFFFF;
@@ -71,10 +115,10 @@ dialog::backdrop {
   position: relative;
 }
 
-/* Print CSS Rules (@media print 필수 준수 사항) */
+/* Print CSS Rules (@media print: 다중 페이지 자연 분할 + 모든 장 여백 일관 유지) */
 @page {
   size: A4 portrait;
-  margin: 0;
+  margin: 14mm;
 }
 
 @media print {
@@ -96,6 +140,23 @@ dialog::backdrop {
     display: block !important;
   }
 
+  /* 인쇄 시 textarea 대신 정적 미러 텍스트 출력으로 잘림 100% 차단 */
+  .growable-textarea {
+    display: block !important;
+  }
+
+  .growable-textarea-input {
+    display: none !important;
+  }
+
+  .growable-textarea-mirror {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+    overflow: visible !important;
+    min-block-size: 0 !important;
+  }
+
   .a4-scale-outer,
   .a4-scale-inner {
     width: auto !important;
@@ -110,16 +171,31 @@ dialog::backdrop {
     background: #FFFFFF !important;
   }
 
+  /* 공통 A4 페이지 (@page 14mm 여백이 모든 분할 페이지에 자동 적용되므로 내부 padding 제거) */
   .a4-page {
-    width: 210mm !important;
-    min-height: 297mm !important;
-    padding: 15mm !important;
-    margin: 0 auto !important;
+    width: 100% !important;
+    min-height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
     box-sizing: border-box !important;
-    page-break-after: always !important;
-    break-after: page !important;
     background: #FFFFFF !important;
     box-shadow: none !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  /* 흐름형 문서(결산 보고서, 예산안/청구서): block 전환으로 다중 페이지 표 자연 분할 보장 */
+  .a4-page-flow {
+    display: block !important;
+    height: auto !important;
+  }
+
+  /* 영수증 증빙철: 이미 페이지별 분할된 2x2 / 2x1 고정 격자 레이아웃 유지 */
+  .a4-page-receipt {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    height: calc(297mm - 28mm) !important;
   }
 
   .a4-page:last-child {
@@ -127,9 +203,28 @@ dialog::backdrop {
     break-after: auto !important;
   }
 
+  /* 다중 페이지 표 헤더 반복 및 행/블록 분할 보호 */
+  table {
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  tr,
   .receipt-card,
-  tr {
+  .print-avoid-break {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  .print-keep-with-next {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 }

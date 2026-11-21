@@ -290,42 +290,80 @@ export const App: React.FC = () => {
     setSyncStatus('synced');
   };
 
-  const handleImportJson = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const parsed = JSON.parse(String(e.target?.result || '{}'));
-        if (Array.isArray(parsed.transactions)) {
-          setTransactions(parsed.transactions);
-          SyncManager.saveTransactions(parsed.transactions);
+  const handleImportJson = (
+    file: File
+  ): Promise<{ ok: boolean; message: string }> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = SyncManager.parseAndValidateBackupJson(
+          String(e.target?.result || '')
+        );
+        if (!result.ok) {
+          resolve({ ok: false, message: result.error });
+          return;
         }
-        if (parsed.budgets) {
-          setBudgets(parsed.budgets);
-          SyncManager.saveBudgets(parsed.budgets);
+
+        setTransactions(result.transactions);
+        SyncManager.saveTransactions(result.transactions);
+
+        const nextBudgets: BudgetsMap = {
+          annual_budget:
+            result.budgets.annual_budget || budgets.annual_budget,
+          retreat_claim:
+            result.budgets.retreat_claim || budgets.retreat_claim,
+        };
+        setBudgets(nextBudgets);
+        SyncManager.saveBudgets(nextBudgets);
+
+        const nextMokjangs =
+          result.mokjangs !== null ? result.mokjangs : mokjangs;
+        if (result.mokjangs !== null) {
+          setMokjangs(nextMokjangs);
+          SyncManager.saveMokjangs(nextMokjangs);
         }
-        if (Array.isArray(parsed.mokjangs)) {
-          setMokjangs(parsed.mokjangs);
-          SyncManager.saveMokjangs(parsed.mokjangs);
-        }
-        if (parsed.settings) {
-          const merged = { ...settings, ...parsed.settings };
+
+        if (result.settings) {
+          const merged: AppSettings = {
+            ...settings,
+            ...result.settings,
+            // 백업 파일에 API 키가 비어 있으면 현재 기기의 키를 보존
+            geminiApiKey:
+              result.settings.geminiApiKey?.trim() ||
+              settings.geminiApiKey ||
+              '',
+          };
           setSettings(merged);
           SyncManager.saveSettings(merged);
+          setSyncStatus(merged.gasWebAppUrl.trim() ? 'synced' : 'local');
         }
-      } catch (err) {
-        console.error('JSON 복원 오류:', err);
-      }
-    };
-    reader.readAsText(file);
+
+        resolve({
+          ok: true,
+          message: `전체 복원 완료 · 장부 ${result.transactions.length}건, 목장 ${nextMokjangs.length}개, 연간예산 ${nextBudgets.annual_budget.items.length}건, 청구서 ${nextBudgets.retreat_claim.items.length}건`,
+        });
+      };
+      reader.onerror = () => {
+        resolve({ ok: false, message: '파일을 읽는 중 오류가 발생했습니다.' });
+      };
+      reader.readAsText(file);
+    });
   };
 
-  const handleStartCleanLedger = (initialCarryover: number) => {
-    const clean = SyncManager.startCleanProductionLedger(
+  const handleResetAllData = (
+    initialCarryover: number,
+    keepConnections: boolean
+  ) => {
+    const clean = SyncManager.resetAllDataClean(
       yearMonth,
-      initialCarryover
+      initialCarryover,
+      keepConnections
     );
     setTransactions(clean.transactions);
+    setBudgets(clean.budgets);
+    setMokjangs(clean.mokjangs);
     setSettings(clean.settings);
+    setSyncStatus(clean.settings.gasWebAppUrl.trim() ? 'synced' : 'local');
     setAccountFilter('all');
   };
 
@@ -679,8 +717,14 @@ export const App: React.FC = () => {
           })
         }
         onImportJson={handleImportJson}
-        onStartCleanLedger={handleStartCleanLedger}
+        onResetAllData={handleResetAllData}
         onResetSampleData={handleResetSampleData}
+        dataSummary={{
+          transactionCount: transactions.length,
+          mokjangCount: mokjangs.length,
+          annualBudgetCount: budgets.annual_budget.items.length,
+          retreatBudgetCount: budgets.retreat_claim.items.length,
+        }}
       />
     </div>
   );

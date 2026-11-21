@@ -33,6 +33,13 @@ import { TdsDialog } from './TdsDialog';
 
 export type SettingsTabType = 'gemini' | 'connection' | 'code_gs' | 'backup';
 
+interface DataSummaryInfo {
+  transactionCount: number;
+  mokjangCount: number;
+  annualBudgetCount: number;
+  retreatBudgetCount: number;
+}
+
 interface SyncSettingsModalProps {
   open: boolean;
   onClose: () => void;
@@ -43,9 +50,10 @@ interface SyncSettingsModalProps {
   onPushAllToGas: (url: string) => Promise<void>;
   onExportCsv: () => void;
   onExportJson: () => void;
-  onImportJson: (file: File) => void;
-  onStartCleanLedger: (initialCarryover: number) => void;
+  onImportJson: (file: File) => Promise<{ ok: boolean; message: string }>;
+  onResetAllData: (initialCarryover: number, keepConnections: boolean) => void;
   onResetSampleData: () => void;
+  dataSummary: DataSummaryInfo;
 }
 
 interface FeedbackBannerState {
@@ -64,8 +72,9 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   onExportCsv,
   onExportJson,
   onImportJson,
-  onStartCleanLedger,
+  onResetAllData,
   onResetSampleData,
+  dataSummary,
 }) => {
   const wasOpenRef = useRef<boolean>(false);
 
@@ -97,6 +106,9 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   const [authorInput, setAuthorInput] = useState<string>(settings.authorName);
 
   const [carryoverStr, setCarryoverStr] = useState<string>('');
+  const [keepConnectionsOnReset, setKeepConnectionsOnReset] =
+    useState<boolean>(true);
+  const [confirmResetStep, setConfirmResetStep] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<FeedbackBannerState | null>(null);
   const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
@@ -126,6 +138,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
       setUrlInput(settings.gasWebAppUrl || '');
       setDeptInput(settings.departmentName || '은혜교회 청년부');
       setAuthorInput(settings.authorName || '김송연');
+      setConfirmResetStep(false);
       setFeedback(null);
     } else if (!open && wasOpenRef.current) {
       wasOpenRef.current = false;
@@ -771,90 +784,51 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
         )}
 
         {/* =================================================================
-            탭 4: 실제 서비스 모드 전환 / 백업 / 복원
+            탭 4: 전체 데이터 일괄 백업 · 복원 · 완전 초기화
            ================================================================= */}
         {activeTab === 'backup' && (
           <div className="space-y-3">
-            {/* 실제 서비스 장부 시작 카드 */}
-            <div className="bg-[#E8F3FF] rounded-2xl p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-[14px] font-bold text-[#1B64DA] flex items-center gap-1.5">
-                    <Rocket className="w-4 h-4" />
-                    <span>실제 서비스 모드로 깨끗하게 시작하기</span>
-                  </div>
-                  <div className="text-[12px] text-[#4E5968] mt-0.5">
-                    테스트용 가상 샘플 내역을 모두 비우고, 우리 청년부의 실제 전월 이월금부터 바로 기록을 시작합니다.
-                  </div>
-                </div>
+            {/* 현재 저장된 전체 데이터 현황 */}
+            <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-2">
+              <div className="text-[12.5px] font-bold text-[#4E5968]">
+                현재 저장된 전체 데이터 현황
               </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <div className="flex-1 bg-[#FFFFFF] rounded-xl px-3.5 py-2 flex items-center justify-between">
-                  <span className="text-[12px] font-semibold text-[#4E5968]">
-                    시작 전월 이월금 (없으면 0원):
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={carryoverStr}
-                      onChange={(e) => {
-                        const n = parseDigits(e.target.value);
-                        setCarryoverStr(n > 0 ? formatNumber(n) : '');
-                      }}
-                      placeholder="0"
-                      className="w-28 text-right font-bold text-[14px] text-[#191F28] bg-transparent focus:outline-none tabular-nums"
-                    />
-                    <span className="text-[13px] font-bold text-[#191F28]">
-                      원
-                    </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 tabular-nums">
+                <div className="bg-[#FFFFFF] rounded-xl px-3 py-2">
+                  <div className="text-[11px] text-[#8B95A1]">장부 거래</div>
+                  <div className="text-[14px] font-bold text-[#191F28]">
+                    {dataSummary.transactionCount}건
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onStartCleanLedger(parseDigits(carryoverStr));
-                    setFeedback({
-                      tone: 'success',
-                      message:
-                        '🚀 샘플 내역을 비우고 실제 장부 모드로 전환되었습니다!',
-                    });
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold shrink-0 active:scale-[0.97] transition-all duration-150"
-                >
-                  샘플 비우고 실제 장부 시작
-                </button>
+                <div className="bg-[#FFFFFF] rounded-xl px-3 py-2">
+                  <div className="text-[11px] text-[#8B95A1]">목장 현황</div>
+                  <div className="text-[14px] font-bold text-[#191F28]">
+                    {dataSummary.mokjangCount}개
+                  </div>
+                </div>
+                <div className="bg-[#FFFFFF] rounded-xl px-3 py-2">
+                  <div className="text-[11px] text-[#8B95A1]">연간 예산안</div>
+                  <div className="text-[14px] font-bold text-[#191F28]">
+                    {dataSummary.annualBudgetCount}건
+                  </div>
+                </div>
+                <div className="bg-[#FFFFFF] rounded-xl px-3 py-2">
+                  <div className="text-[11px] text-[#8B95A1]">행사 청구서</div>
+                  <div className="text-[14px] font-bold text-[#191F28]">
+                    {dataSummary.retreatBudgetCount}건
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 flex items-center justify-between gap-4">
+            {/* 1. 전체 데이터 일괄 JSON 백업 & 복원 */}
+            <div className="bg-[#E8F3FF] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="text-[14px] font-bold text-[#191F28]">
-                  엑셀 호환 CSV 장부 다운로드
+                <div className="text-[14px] font-bold text-[#1B64DA]">
+                  전체 데이터 일괄 백업 · 복원 (JSON)
                 </div>
-                <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                  현재 선택된 월의 수입·지출·잔액·증빙번호를 엑셀 파일로 저장합니다.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={onExportCsv}
-                className="px-4 py-2.5 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[13px] font-semibold flex items-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-[#3182F6]" />
-                CSV 다운로드
-              </button>
-            </div>
-
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 flex items-center justify-between gap-4">
-              <div>
-                <div className="text-[14px] font-bold text-[#191F28]">
-                  전체 데이터 JSON 백업 및 복원
-                </div>
-                <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                  영수증 사진과 예산안·목장 설정을 포함한 전체 데이터를 백업하거나 복원합니다.
+                <div className="text-[12px] text-[#4E5968] mt-0.5">
+                  장부·영수증·목장·연간예산안·청구서·결재선 설정을 한 파일로 저장하고 복원합니다.
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -862,14 +836,13 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   ref={jsonInputRef}
                   type="file"
                   accept="application/json,.json"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      onImportJson(file);
+                      const res = await onImportJson(file);
                       setFeedback({
-                        tone: 'success',
-                        message:
-                          '✅ JSON 백업 파일이 성공적으로 복원되었습니다.',
+                        tone: res.ok ? 'success' : 'error',
+                        message: res.message,
                       });
                       e.target.value = '';
                     }
@@ -878,46 +851,186 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                 />
                 <button
                   type="button"
-                  onClick={onExportJson}
-                  className="px-3.5 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                  onClick={() => {
+                    onExportJson();
+                    setFeedback({
+                      tone: 'success',
+                      message:
+                        '전체 데이터(장부·목장·예산안·청구서·설정) 백업 파일이 저장되었습니다.',
+                    });
+                  }}
+                  className="px-3.5 py-2.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  백업 저장
+                  <span>전체 백업</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => jsonInputRef.current?.click()}
-                  className="px-3.5 py-2.5 rounded-xl bg-[#E5E8EB] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                  className="px-3.5 py-2.5 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[12.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  백업 복원
+                  <span>전체 복원</span>
                 </button>
               </div>
             </div>
 
-            <div className="bg-[#F9FAFB] rounded-2xl p-4 flex items-center justify-between gap-4">
+            {/* 2. 전체 데이터 일괄 초기화 */}
+            <div className="bg-[#FFEEF0]/70 rounded-2xl p-4 space-y-3 border border-[#F04452]/20">
               <div>
-                <div className="text-[14px] font-bold text-[#4E5968]">
-                  데모용 샘플 데이터 불러오기
+                <div className="text-[14px] font-bold text-[#F04452] flex items-center gap-1.5">
+                  <Rocket className="w-4 h-4" />
+                  <span>전체 데이터 일괄 초기화 (모든 탭 비우기)</span>
                 </div>
-                <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                  기능 테스트를 위해 2026년 11월 샘플 거래 내역과 가상 영수증을 다시 불러옵니다.
+                <div className="text-[12px] text-[#4E5968] mt-0.5">
+                  장부 거래·영수증, 목장 목록, 연간 예산안, 수련회 청구서 항목을 한 번에 모두 비웁니다.
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetSampleData();
-                  setFeedback({
-                    tone: 'info',
-                    message: '데모 샘플 데이터가 복원되었습니다.',
-                  });
-                }}
-                className="px-4 py-2.5 rounded-xl bg-[#E5E8EB] text-[#4E5968] text-[12.5px] font-bold flex items-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                샘플 불러오기
-              </button>
+
+              <div className="bg-[#FFFFFF] rounded-xl px-3.5 py-2 flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-[#4E5968]">
+                  초기화 후 시작 이월금 (선택):
+                </span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={carryoverStr}
+                    onChange={(e) => {
+                      const n = parseDigits(e.target.value);
+                      setCarryoverStr(n > 0 ? formatNumber(n) : '');
+                    }}
+                    placeholder="0"
+                    className="w-28 text-right font-bold text-[14px] text-[#191F28] bg-transparent focus:outline-none tabular-nums"
+                  />
+                  <span className="text-[13px] font-bold text-[#191F28]">
+                    원
+                  </span>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-[12.5px] font-semibold text-[#4E5968] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={keepConnectionsOnReset}
+                  onChange={(e) => setKeepConnectionsOnReset(e.target.checked)}
+                  className="w-4 h-4 accent-[#3182F6] rounded"
+                />
+                <span>
+                  AI API 키 · 구글 시트 URL · 부서명/결재선은 유지
+                </span>
+              </label>
+
+              {!confirmResetStep ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onExportJson();
+                      setFeedback({
+                        tone: 'info',
+                        message:
+                          '초기화 전 전체 백업 파일을 먼저 저장했습니다.',
+                      });
+                    }}
+                    className="px-3 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97]"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>초기화 전 백업 저장</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setConfirmResetStep(true)}
+                    className="px-4 py-2 rounded-xl bg-[#F04452] text-[#FFFFFF] text-[13px] font-bold active:scale-[0.97] transition-all"
+                  >
+                    전체 데이터 초기화
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-[#FFFFFF] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12.5px] font-bold text-[#F04452]">
+                    정말 장부·목장·예산안을 모두 비울까요?
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmResetStep(false)}
+                      className="px-3 py-1.5 rounded-lg bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold"
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onResetAllData(
+                          parseDigits(carryoverStr),
+                          keepConnectionsOnReset
+                        );
+                        setConfirmResetStep(false);
+                        setCarryoverStr('');
+                        setFeedback({
+                          tone: 'success',
+                          message:
+                            '장부·목장·연간예산안·청구서 데이터가 모두 초기화되었습니다.',
+                        });
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#F04452] text-[#FFFFFF] text-[12px] font-bold active:scale-[0.97]"
+                    >
+                      예, 전체 초기화
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. 엑셀 CSV & 샘플 복원 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="bg-[#F9FAFB] rounded-2xl p-3.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold text-[#191F28]">
+                    월별 장부 CSV
+                  </div>
+                  <div className="text-[11.5px] text-[#8B95A1]">
+                    엑셀 호환 파일 저장
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onExportCsv}
+                  className="px-3 py-2 rounded-xl bg-[#FFFFFF] text-[#191F28] text-[12px] font-semibold flex items-center gap-1 shrink-0 active:scale-[0.97]"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-[#3182F6]" />
+                  <span>저장</span>
+                </button>
+              </div>
+
+              <div className="bg-[#F9FAFB] rounded-2xl p-3.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold text-[#4E5968]">
+                    샘플 데이터 복원
+                  </div>
+                  <div className="text-[11.5px] text-[#8B95A1]">
+                    체험용 전체 샘플 불러오기
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onResetSampleData();
+                    setConfirmResetStep(false);
+                    setFeedback({
+                      tone: 'info',
+                      message:
+                        '전체 샘플 데이터(장부·목장·예산안)가 복원되었습니다.',
+                    });
+                  }}
+                  className="px-3 py-2 rounded-xl bg-[#E5E8EB] text-[#4E5968] text-[12px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97]"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>복원</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
