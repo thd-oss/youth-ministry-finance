@@ -1,18 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Calculator,
+  Check,
   ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Eraser,
   Eye,
   FileText,
+  FolderPlus,
   Maximize2,
   Minimize2,
+  Pencil,
   Plus,
   Printer,
   RotateCcw,
+  SlidersHorizontal,
   Smartphone,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   AppSettings,
@@ -51,6 +55,68 @@ interface BudgetBuilderViewProps {
 
 type BuilderScreenMode = 'card_editor' | 'a4_preview';
 
+interface BudgetCategoryGroup {
+  key: string;
+  entryType: TransactionType;
+  category: string;
+  items: BudgetLineItem[];
+  subtotal: number;
+  sharePercent: number;
+  color: string;
+}
+
+const EXPENSE_PALETTE = [
+  '#3182F6',
+  '#1B64DA',
+  '#00B493',
+  '#F59E0B',
+  '#8B5CF6',
+  '#EC4899',
+  '#0EA5E9',
+  '#6B7684',
+];
+
+const INCOME_PALETTE = [
+  '#10B981',
+  '#059669',
+  '#0EA5E9',
+  '#3182F6',
+  '#6366F1',
+];
+
+interface DraftFormState {
+  category: string;
+  subCategory: string;
+  itemName: string;
+  unitPriceStr: string;
+  qtyStr: string;
+  qtyUnit: string;
+  freqStr: string;
+  freqUnit: string;
+  formula: string;
+  amountStr: string;
+  note: string;
+}
+
+const EMPTY_DRAFT: DraftFormState = {
+  category: '',
+  subCategory: '',
+  itemName: '',
+  unitPriceStr: '',
+  qtyStr: '',
+  qtyUnit: '명',
+  freqStr: '',
+  freqUnit: '회',
+  formula: '',
+  amountStr: '',
+  note: '',
+};
+
+const parseDigits = (raw: string): number => {
+  const digits = raw.replace(/[^0-9]/g, '');
+  return digits ? Number(digits) : 0;
+};
+
 export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   budgets,
   onUpdateBudget,
@@ -68,136 +134,138 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     }
   }, [initialTemplate]);
 
-  // 모바일(< 860px)은 물론 예산 항목을 직접 작성할 때 가장 편한 카드형 편집기를 기본 제공
-  const [screenMode, setScreenMode] = useState<BuilderScreenMode>('card_editor');
+  const [screenMode, setScreenMode] =
+    useState<BuilderScreenMode>('card_editor');
   const [a4ZoomMode, setA4ZoomMode] = useState<'fit' | 'actual'>('fit');
-  const [isOverviewExpanded, setIsOverviewExpanded] = useState<boolean>(false);
 
-  // 새 예산 항목 직접 작성기(Composer) 상태 (수입/지출 구분 + 1차 관/항 + 2차 세목 지원)
-  const [draftEntryType, setDraftEntryType] =
-    useState<TransactionType>('expense');
-  const [draftCategory, setDraftCategory] = useState<string>('');
-  const [draftSubCategory, setDraftSubCategory] = useState<string>('');
-  const [draftItemName, setDraftItemName] = useState<string>('');
-  const [draftUnitPriceStr, setDraftUnitPriceStr] = useState<string>('');
-  const [draftQtyStr, setDraftQtyStr] = useState<string>('');
-  const [draftQtyUnit, setDraftQtyUnit] = useState<string>('명');
-  const [draftFreqStr, setDraftFreqStr] = useState<string>('');
-  const [draftFreqUnit, setDraftFreqUnit] = useState<string>('회');
-  const [draftFormula, setDraftFormula] = useState<string>('');
-  const [draftAmountStr, setDraftAmountStr] = useState<string>('');
-  const [draftNote, setDraftNote] = useState<string>('');
-  const [composerFeedback, setComposerFeedback] = useState<string>('');
+  // 아코디언 / 트리 UI 상태
+  const [collapsedGroups, setCollapsedGroups] = useState<
+    Record<string, boolean>
+  >({});
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [renamingGroupKey, setRenamingGroupKey] = useState<string | null>(null);
+  const [renameGroupValue, setRenameGroupValue] = useState<string>('');
 
-  const composerCategoryRef = useRef<HTMLInputElement | null>(null);
+  // 그룹 내부 빠른 항목 추가 상태 (어느 그룹에 열려있는지)
+  const [addingTarget, setAddingTarget] = useState<{
+    entryType: TransactionType;
+    category: string | null; // null이면 '새 1차 구분(사역/수입원) 생성' 모드
+  } | null>(null);
+  const [draft, setDraft] = useState<DraftFormState>(EMPTY_DRAFT);
+  const [feedback, setFeedback] = useState<string>('');
+
+  // 문서 기본정보 & 계좌정보 접이식 상태
+  const [isDocMetaExpanded, setIsDocMetaExpanded] = useState<boolean>(false);
+
+  // 인라인 편집 시 간편 단가 계산기 상태
+  const [editCalcUnit, setEditCalcUnit] = useState<string>('');
+  const [editCalcQty, setEditCalcQty] = useState<string>('');
+  const [editCalcQtyUnit, setEditCalcQtyUnit] = useState<string>('명');
+  const [editCalcFreq, setEditCalcFreq] = useState<string>('');
+  const [editCalcFreqUnit, setEditCalcFreqUnit] = useState<string>('회');
+
+  const draftSubInputRef = useRef<HTMLInputElement | null>(null);
+  const draftCatInputRef = useRef<HTMLInputElement | null>(null);
 
   const doc = budgets[activeTemplate];
 
-  const totalGrossAmount = doc.items.reduce(
-    (sum, item) => sum + (Number(item.amount) || 0),
-    0
-  );
-  const netChurchClaimAmount = Math.max(
-    0,
-    totalGrossAmount - (Number(doc.selfBurdenAmount) || 0)
-  );
+  // 템플릿 전환 시 편집/입력 패널 초기화
+  useEffect(() => {
+    setEditingItemId(null);
+    setAddingTarget(null);
+    setRenamingGroupKey(null);
+    setFeedback('');
+  }, [activeTemplate]);
 
-  // 현재 문서 내 고유 카테고리 + 활성 카테고리 (빠른 선택 칩 제공용)
-  const suggestedCategories = Array.from(
-    new Set([
-      ...doc.items
-        .filter((item) => (item.entryType || 'expense') === draftEntryType)
-        .map((item) => item.category.trim())
-        .filter(Boolean),
-      ...(draftEntryType === 'income'
-        ? activeIncomeCategories
-        : activeExpenseCategories),
-    ])
-  ).slice(0, 12);
+  // 3단계 위계 트리 파생: 지출 그룹 / 수입 그룹 + 소계 + 비중(%)
+  const {
+    expenseGroups,
+    incomeGroups,
+    totalExpense,
+    totalIncome,
+    netChurchClaimAmount,
+  } = useMemo(() => {
+    const expMap = new Map<string, BudgetLineItem[]>();
+    const incMap = new Map<string, BudgetLineItem[]>();
+    let expTotal = 0;
+    let incTotal = 0;
 
-  const suggestedSubCategories =
-    draftEntryType === 'income'
-      ? COMMON_INCOME_SUBCATEGORIES
-      : COMMON_EXPENSE_SUBCATEGORIES;
+    doc.items.forEach((item) => {
+      const eType: TransactionType =
+        item.entryType === 'income' ? 'income' : 'expense';
+      const cat = item.category.trim() || '미분류';
+      const amt = Number(item.amount) || 0;
 
-  const parseDigits = (raw: string): number => {
-    const digits = raw.replace(/[^0-9]/g, '');
-    return digits ? Number(digits) : 0;
-  };
-
-  // 단가 × 수량 × 횟수 입력 시 자동으로 산출 기초 문자열과 총액을 계산
-  const recalculateDraftFromMultipliers = (
-    nextUnitStr: string,
-    nextQtyStr: string,
-    nextQtyUnit: string,
-    nextFreqStr: string,
-    nextFreqUnit: string
-  ) => {
-    const unitPrice = parseDigits(nextUnitStr);
-    const qty = parseDigits(nextQtyStr);
-    const freq = parseDigits(nextFreqStr);
-
-    if (unitPrice > 0) {
-      const effectiveQty = qty > 0 ? qty : 1;
-      const effectiveFreq = freq > 0 ? freq : 1;
-      const total = unitPrice * effectiveQty * effectiveFreq;
-      setDraftAmountStr(formatNumber(total));
-
-      const parts: string[] = [`${formatNumber(unitPrice)}원`];
-      if (qty > 0) parts.push(`${formatNumber(qty)}${nextQtyUnit}`);
-      if (freq > 0) parts.push(`${formatNumber(freq)}${nextFreqUnit}`);
-      setDraftFormula(parts.join(' × '));
-    }
-  };
-
-  const handleCreateItemFromComposer = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanCategory =
-      draftCategory.trim() ||
-      (draftEntryType === 'income'
-        ? '교회지원금(예산)'
-        : activeTemplate === 'annual_budget'
-          ? '예배/양육비'
-          : '수련회/행사비');
-    const cleanSubCategory = draftSubCategory.trim();
-    const cleanDescription = draftItemName.trim();
-    const numericAmount = parseDigits(draftAmountStr);
-
-    if (!cleanSubCategory) {
-      setComposerFeedback('⚠️ 2차 세부 항목(세목)을 선택하거나 입력해 주세요.');
-      return;
-    }
-
-    const newItem: BudgetLineItem = {
-      id: `bg-${Date.now()}`,
-      entryType: draftEntryType,
-      category: cleanCategory,
-      subCategory: cleanSubCategory,
-      itemName: cleanDescription,
-      formula:
-        draftFormula.trim() ||
-        (numericAmount > 0 ? `${formatNumber(numericAmount)}원 × 1식` : ''),
-      amount: numericAmount,
-      note: draftNote.trim(),
-    };
-
-    onUpdateBudget(activeTemplate, {
-      ...doc,
-      items: [...doc.items, newItem],
+      if (eType === 'income') {
+        incTotal += amt;
+        const arr = incMap.get(cat) || [];
+        arr.push(item);
+        incMap.set(cat, arr);
+      } else {
+        expTotal += amt;
+        const arr = expMap.get(cat) || [];
+        arr.push(item);
+        expMap.set(cat, arr);
+      }
     });
 
-    setDraftSubCategory('');
-    setDraftItemName('');
-    setDraftUnitPriceStr('');
-    setDraftQtyStr('');
-    setDraftFreqStr('');
-    setDraftFormula('');
-    setDraftAmountStr('');
-    setDraftNote('');
-    setComposerFeedback(
-      `✅ [${cleanCategory} › ${cleanSubCategory}] (${formatWon(numericAmount)}) 추가됨`
+    const expGroups: BudgetCategoryGroup[] = Array.from(expMap.entries()).map(
+      ([category, items], idx) => {
+        const subtotal = items.reduce(
+          (sum, it) => sum + (Number(it.amount) || 0),
+          0
+        );
+        const sharePercent =
+          expTotal > 0 ? Math.round((subtotal / expTotal) * 1000) / 10 : 0;
+        return {
+          key: `expense::${category}`,
+          entryType: 'expense',
+          category,
+          items,
+          subtotal,
+          sharePercent,
+          color: EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length],
+        };
+      }
     );
-    setTimeout(() => setComposerFeedback(''), 2500);
+
+    const incGroups: BudgetCategoryGroup[] = Array.from(incMap.entries()).map(
+      ([category, items], idx) => {
+        const subtotal = items.reduce(
+          (sum, it) => sum + (Number(it.amount) || 0),
+          0
+        );
+        const sharePercent =
+          incTotal > 0 ? Math.round((subtotal / incTotal) * 1000) / 10 : 0;
+        return {
+          key: `income::${category}`,
+          entryType: 'income',
+          category,
+          items,
+          subtotal,
+          sharePercent,
+          color: INCOME_PALETTE[idx % INCOME_PALETTE.length],
+        };
+      }
+    );
+
+    const netClaim = Math.max(
+      0,
+      expTotal - (Number(doc.selfBurdenAmount) || 0)
+    );
+
+    return {
+      expenseGroups: expGroups,
+      incomeGroups: incGroups,
+      totalExpense: expTotal,
+      totalIncome: incTotal,
+      netChurchClaimAmount: netClaim,
+    };
+  }, [doc.items, doc.selfBurdenAmount]);
+
+  const showToast = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(''), 2600);
   };
 
   const handleFieldChange = <K extends keyof BudgetDocument>(
@@ -224,23 +292,187 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     });
   };
 
-  const handleMoveRow = (index: number, direction: -1 | 1) => {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= doc.items.length) return;
-    const nextItems = [...doc.items];
-    const [moved] = nextItems.splice(index, 1);
-    nextItems.splice(targetIndex, 0, moved);
+  const handleRemoveRow = (id: string) => {
+    if (editingItemId === id) setEditingItemId(null);
+    onUpdateBudget(activeTemplate, {
+      ...doc,
+      items: doc.items.filter((item) => item.id !== id),
+    });
+  };
+
+  const handleRenameGroup = (
+    entryType: TransactionType,
+    oldCategory: string,
+    newCategoryRaw: string
+  ) => {
+    const nextCat = newCategoryRaw.trim();
+    if (!nextCat || nextCat === oldCategory) {
+      setRenamingGroupKey(null);
+      return;
+    }
+    const nextItems = doc.items.map((item) => {
+      const itemType: TransactionType =
+        item.entryType === 'income' ? 'income' : 'expense';
+      const itemCat = item.category.trim() || '미분류';
+      if (itemType === entryType && itemCat === oldCategory) {
+        return { ...item, category: nextCat };
+      }
+      return item;
+    });
+    onUpdateBudget(activeTemplate, {
+      ...doc,
+      items: nextItems,
+    });
+    setRenamingGroupKey(null);
+    showToast(`1차 구분 이름이 [${nextCat}]로 변경되었습니다.`);
+  };
+
+  const toggleGroupCollapsed = (groupKey: string) => {
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey],
+    }));
+  };
+
+  const openInlineAdd = (
+    entryType: TransactionType,
+    category: string | null
+  ) => {
+    setEditingItemId(null);
+    if (category) {
+      const gKey = `${entryType}::${category}`;
+      setCollapsedGroups((prev) => ({ ...prev, [gKey]: false }));
+    }
+    setAddingTarget({ entryType, category });
+    setDraft({
+      ...EMPTY_DRAFT,
+      category: category || '',
+    });
+    setTimeout(() => {
+      if (category) {
+        draftSubInputRef.current?.focus();
+      } else {
+        draftCatInputRef.current?.focus();
+      }
+    }, 60);
+  };
+
+  const updateDraftMultipliers = (patch: Partial<DraftFormState>) => {
+    setDraft((prev) => {
+      const next = { ...prev, ...patch };
+      const unitPrice = parseDigits(next.unitPriceStr);
+      const qty = parseDigits(next.qtyStr);
+      const freq = parseDigits(next.freqStr);
+      if (unitPrice > 0) {
+        const effQty = qty > 0 ? qty : 1;
+        const effFreq = freq > 0 ? freq : 1;
+        next.amountStr = formatNumber(unitPrice * effQty * effFreq);
+        const parts: string[] = [`${formatNumber(unitPrice)}원`];
+        if (qty > 0) parts.push(`${formatNumber(qty)}${next.qtyUnit}`);
+        if (freq > 0) parts.push(`${formatNumber(freq)}${next.freqUnit}`);
+        next.formula = parts.join(' × ');
+      }
+      return next;
+    });
+  };
+
+  const handleSubmitInlineAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addingTarget) return;
+
+    const cleanCategory =
+      (addingTarget.category || draft.category).trim() ||
+      (addingTarget.entryType === 'income' ? '교회지원금(예산)' : '기타운영비');
+    const cleanSubCategory = draft.subCategory.trim();
+    const cleanDescription = draft.itemName.trim();
+    const numericAmount = parseDigits(draft.amountStr);
+
+    if (!cleanSubCategory) {
+      showToast('2차 세부 항목(세목)을 선택하거나 입력해 주세요.');
+      return;
+    }
+
+    const newItem: BudgetLineItem = {
+      id: `bg-${Date.now()}`,
+      entryType: addingTarget.entryType,
+      category: cleanCategory,
+      subCategory: cleanSubCategory,
+      itemName: cleanDescription,
+      formula:
+        draft.formula.trim() ||
+        (numericAmount > 0 ? `${formatNumber(numericAmount)}원 × 1식` : ''),
+      amount: numericAmount,
+      note: draft.note.trim(),
+    };
+
+    onUpdateBudget(activeTemplate, {
+      ...doc,
+      items: [...doc.items, newItem],
+    });
+
+    // 새 1차 구분으로 만든 경우, 이제 그 그룹에 고정되어 계속 세부 항목을 추가할 수 있게 유지하거나 초기화
+    setAddingTarget({
+      entryType: addingTarget.entryType,
+      category: cleanCategory,
+    });
+    setDraft({
+      ...EMPTY_DRAFT,
+      category: cleanCategory,
+    });
+    showToast(
+      `[${cleanCategory} › ${cleanSubCategory}] ${formatWon(numericAmount)} 추가됨`
+    );
+  };
+
+  const handleOpenEditItem = (item: BudgetLineItem) => {
+    if (editingItemId === item.id) {
+      setEditingItemId(null);
+      return;
+    }
+    setAddingTarget(null);
+    setEditingItemId(item.id);
+    setEditCalcUnit('');
+    setEditCalcQty('');
+    setEditCalcFreq('');
+  };
+
+  const applyEditItemCalculator = (
+    itemId: string,
+    uStr: string,
+    qStr: string,
+    qUnit: string,
+    fStr: string,
+    fUnit: string
+  ) => {
+    const unitPrice = parseDigits(uStr);
+    const qty = parseDigits(qStr);
+    const freq = parseDigits(fStr);
+    if (unitPrice <= 0) return;
+
+    const effQty = qty > 0 ? qty : 1;
+    const effFreq = freq > 0 ? freq : 1;
+    const total = unitPrice * effQty * effFreq;
+    const parts: string[] = [`${formatNumber(unitPrice)}원`];
+    if (qty > 0) parts.push(`${formatNumber(qty)}${qUnit}`);
+    if (freq > 0) parts.push(`${formatNumber(freq)}${fUnit}`);
+
+    const nextItems = doc.items.map((item) =>
+      item.id === itemId
+        ? { ...item, amount: total, formula: parts.join(' × ') }
+        : item
+    );
     onUpdateBudget(activeTemplate, {
       ...doc,
       items: nextItems,
     });
   };
 
-  // 더미 텍스트 없이 깨끗한 빈 카드/행 추가
-  const handleAddBlankRow = () => {
+  const handleAddBlankRowForA4 = () => {
     const newItem: BudgetLineItem = {
       id: `bg-${Date.now()}`,
-      category: '',
+      entryType: 'expense',
+      category: expenseGroups[expenseGroups.length - 1]?.category || '기타운영비',
+      subCategory: '',
       itemName: '',
       formula: '',
       amount: 0,
@@ -252,15 +484,6 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     });
   };
 
-  // 마지막 1개까지도 모두 삭제 가능하도록 제한 해제
-  const handleRemoveRow = (id: string) => {
-    onUpdateBudget(activeTemplate, {
-      ...doc,
-      items: doc.items.filter((item) => item.id !== id),
-    });
-  };
-
-  // 샘플 항목을 전부 비우고 백지 상태에서 직접 예산 작성 시작
   const handleClearAllItems = () => {
     onUpdateBudget(activeTemplate, {
       ...doc,
@@ -268,11 +491,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       selfBurdenAmount: 0,
       selfBurdenNote: '',
     });
+    setEditingItemId(null);
+    setAddingTarget({ entryType: 'expense', category: null });
+    setDraft(EMPTY_DRAFT);
     setScreenMode('card_editor');
-    setComposerFeedback('🧹 항목을 모두 비웠습니다. 새로 입력해 보세요.');
-    setTimeout(() => {
-      composerCategoryRef.current?.focus();
-    }, 100);
+    showToast('항목을 모두 비웠습니다. 새 사역을 추가해 보세요.');
   };
 
   const handleResetTemplate = () => {
@@ -281,8 +504,931 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
         ? INITIAL_RETREAT_BUDGET
         : INITIAL_ANNUAL_BUDGET;
     onUpdateBudget(activeTemplate, defaultDoc);
-    setComposerFeedback('샘플 예산안이 복원되었습니다.');
-    setTimeout(() => setComposerFeedback(''), 2500);
+    setEditingItemId(null);
+    setAddingTarget(null);
+    showToast('샘플 예산안이 복원되었습니다.');
+  };
+
+  const allExpanded =
+    expenseGroups.length + incomeGroups.length > 0 &&
+    [...expenseGroups, ...incomeGroups].every((g) => !collapsedGroups[g.key]);
+
+  const toggleExpandAll = () => {
+    const nextState: Record<string, boolean> = {};
+    const shouldCollapse = allExpanded;
+    [...expenseGroups, ...incomeGroups].forEach((g) => {
+      nextState[g.key] = shouldCollapse;
+    });
+    setCollapsedGroups(nextState);
+  };
+
+  // 인라인 추가 폼 렌더러 (그룹 내부 & 새 1차 구분 생성 공용)
+  const renderInlineAddForm = (
+    entryType: TransactionType,
+    lockedCategory: string | null
+  ) => {
+    const isIncome = entryType === 'income';
+    const subChips = isIncome
+      ? COMMON_INCOME_SUBCATEGORIES
+      : COMMON_EXPENSE_SUBCATEGORIES;
+    const catChips = Array.from(
+      new Set([
+        ...(isIncome ? activeIncomeCategories : activeExpenseCategories),
+      ])
+    ).slice(0, 10);
+
+    return (
+      <form
+        onSubmit={handleSubmitInlineAdd}
+        className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3 border border-[#E5E8EB]"
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#191F28]">
+            {lockedCategory
+              ? `[${lockedCategory}]에 세부 항목 추가`
+              : isIncome
+                ? '새 수입원(1차 구분) 및 첫 항목 추가'
+                : '새 1차 사역(대분류) 및 첫 항목 추가'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAddingTarget(null)}
+            aria-label="입력 닫기"
+            className="w-7 h-7 rounded-full bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center hover:bg-[#E5E8EB]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* 1차 구분 입력 (새 대분류 추가 모드일 때만 표시) */}
+        {!lockedCategory && (
+          <div className="space-y-1.5">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968]">
+              1차 구분 ({isIncome ? '수입원' : '사역/행사'}) · 필수
+            </label>
+            <input
+              ref={draftCatInputRef}
+              type="text"
+              value={draft.category}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, category: e.target.value }))
+              }
+              placeholder={
+                isIncome
+                  ? '예: 교회지원금(예산), 수련회등록비'
+                  : '예: 수련회/행사비, 예배/양육비, 리더십 훈련'
+              }
+              className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+            {catChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {catChips.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() =>
+                      setDraft((prev) => ({ ...prev, category: cat }))
+                    }
+                    className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold transition-all active:scale-[0.97] ${
+                      draft.category === cat
+                        ? 'bg-[#3182F6] text-[#FFFFFF]'
+                        : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 2차 세부 항목 (세목) + 설명(선택) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="space-y-1.5">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968]">
+              2차 세부 항목 (세목) · 필수
+            </label>
+            <input
+              ref={draftSubInputRef}
+              type="text"
+              value={draft.subCategory}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, subCategory: e.target.value }))
+              }
+              placeholder={
+                isIncome ? '예: 월 정기예산 수령' : '예: 식비·간식/다과'
+              }
+              className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968]">
+              설명 (선택)
+            </label>
+            <input
+              type="text"
+              value={draft.itemName}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, itemName: e.target.value }))
+              }
+              placeholder="구체적 내역 (선택 입력)"
+              className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+        </div>
+
+        {/* 2차 세목 빠른 칩 */}
+        <div className="flex flex-wrap gap-1.5">
+          {subChips.map((sub) => (
+            <button
+              key={sub}
+              type="button"
+              onClick={() =>
+                setDraft((prev) => ({ ...prev, subCategory: sub }))
+              }
+              className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold transition-all active:scale-[0.97] ${
+                draft.subCategory === sub
+                  ? 'bg-[#191F28] text-[#FFFFFF]'
+                  : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
+              }`}
+            >
+              {sub}
+            </button>
+          ))}
+        </div>
+
+        {/* 단가 × 수량 × 횟수 간편 계산기 */}
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
+              단가 (원)
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={draft.unitPriceStr}
+              onChange={(e) => {
+                const n = parseDigits(e.target.value);
+                updateDraftMultipliers({
+                  unitPriceStr: n > 0 ? formatNumber(n) : '',
+                });
+              }}
+              placeholder="예: 10,000"
+              className="w-full h-9 px-2.5 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
+              수량
+            </label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={draft.qtyStr}
+                onChange={(e) => {
+                  const n = parseDigits(e.target.value);
+                  updateDraftMultipliers({
+                    qtyStr: n > 0 ? String(n) : '',
+                  });
+                }}
+                placeholder="40"
+                className="w-full h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+              />
+              <select
+                value={draft.qtyUnit}
+                onChange={(e) =>
+                  updateDraftMultipliers({ qtyUnit: e.target.value })
+                }
+                aria-label="수량 단위"
+                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] focus:outline-none"
+              >
+                <option value="명">명</option>
+                <option value="개월">개월</option>
+                <option value="개">개</option>
+                <option value="식">식</option>
+                <option value="부">부</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
+              횟수
+            </label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={draft.freqStr}
+                onChange={(e) => {
+                  const n = parseDigits(e.target.value);
+                  updateDraftMultipliers({
+                    freqStr: n > 0 ? String(n) : '',
+                  });
+                }}
+                placeholder="1"
+                className="w-full h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+              />
+              <select
+                value={draft.freqUnit}
+                onChange={(e) =>
+                  updateDraftMultipliers({ freqUnit: e.target.value })
+                }
+                aria-label="횟수 단위"
+                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] focus:outline-none"
+              >
+                <option value="회">회</option>
+                <option value="개월">개월</option>
+                <option value="박">박</option>
+                <option value="끼">끼</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* 금액 · 산출식 · 비고 */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+          <div className="sm:col-span-4">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+              예산 금액 (원)
+            </label>
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={draft.amountStr}
+                onChange={(e) => {
+                  const n = parseDigits(e.target.value);
+                  setDraft((prev) => ({
+                    ...prev,
+                    amountStr: n > 0 ? formatNumber(n) : '',
+                  }));
+                }}
+                placeholder="0"
+                className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-right text-[15px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+              />
+              <span className="absolute right-3 text-[12.5px] font-bold text-[#4E5968] pointer-events-none">
+                원
+              </span>
+            </div>
+          </div>
+
+          <div className="sm:col-span-5">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+              산출식
+            </label>
+            <input
+              type="text"
+              value={draft.formula}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, formula: e.target.value }))
+              }
+              placeholder="예: 10,000원 × 40명"
+              className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+
+          <div className="sm:col-span-3">
+            <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+              비고 (선택)
+            </label>
+            <input
+              type="text"
+              value={draft.note}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, note: e.target.value }))
+              }
+              placeholder="비고"
+              className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => setAddingTarget(null)}
+            className="h-9 px-3.5 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12.5px] font-semibold hover:bg-[#E5E8EB]"
+          >
+            닫기
+          </button>
+          <button
+            type="submit"
+            className="h-9 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1 active:scale-[0.97]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>항목 추가</span>
+          </button>
+        </div>
+      </form>
+    );
+  };
+
+  // 그룹 섹션 렌더러 (지출 예산 / 수입 예산 공용)
+  const renderSection = (
+    entryType: TransactionType,
+    groups: BudgetCategoryGroup[],
+    sectionTotal: number
+  ) => {
+    const isIncome = entryType === 'income';
+    const sectionItemCount = groups.reduce((acc, g) => acc + g.items.length, 0);
+    const isAddingNewGroup =
+      addingTarget?.entryType === entryType && addingTarget.category === null;
+
+    const categoryMoveOptions = Array.from(
+      new Set([
+        ...groups.map((g) => g.category),
+        ...(isIncome ? activeIncomeCategories : activeExpenseCategories),
+      ])
+    );
+
+    return (
+      <section className="space-y-3">
+        {/* 섹션 헤더 */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`px-2.5 py-1 rounded-full text-[12px] font-bold ${
+                isIncome
+                  ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                  : 'bg-[#191F28] text-[#FFFFFF]'
+              }`}
+            >
+              {isIncome ? '수입 예산' : '지출 예산'}
+            </span>
+            <span className="text-[14px] font-bold text-[#191F28] tabular-nums">
+              {formatWon(sectionTotal)}
+            </span>
+            <span className="text-[12.5px] text-[#8B95A1] tabular-nums">
+              ({groups.length}개 분류 · {sectionItemCount}건)
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => openInlineAdd(entryType, null)}
+            className={`px-3 py-1.5 rounded-full text-[12.5px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all ${
+              isIncome
+                ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                : 'bg-[#FFFFFF] text-[#191F28] hover:bg-[#E5E8EB]'
+            }`}
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+            <span>{isIncome ? '새 수입원 추가' : '새 1차 사역 추가'}</span>
+          </button>
+        </div>
+
+        {/* 새 1차 구분 생성 폼 */}
+        {isAddingNewGroup && (
+          <div className="bg-[#FFFFFF] rounded-3xl p-4">
+            {renderInlineAddForm(entryType, null)}
+          </div>
+        )}
+
+        {/* 그룹 카드 목록 */}
+        {groups.length === 0 ? (
+          !isAddingNewGroup && (
+            <div className="bg-[#FFFFFF] rounded-3xl p-6 text-center">
+              <div className="text-[13.5px] font-medium text-[#8B95A1]">
+                {isIncome
+                  ? '등록된 수입 예산 항목이 없습니다'
+                  : '등록된 지출 예산 항목이 없습니다'}
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="space-y-3">
+            {groups.map((group) => {
+              const isCollapsed = Boolean(collapsedGroups[group.key]);
+              const isRenaming = renamingGroupKey === group.key;
+              const isAddingHere =
+                addingTarget?.entryType === entryType &&
+                addingTarget.category === group.category;
+
+              return (
+                <div
+                  key={group.key}
+                  className="bg-[#FFFFFF] rounded-3xl overflow-hidden"
+                >
+                  {/* 1차 구분(그룹) 헤더 */}
+                  <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-2 bg-[#FFFFFF]">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupCollapsed(group.key)}
+                        aria-label={isCollapsed ? '펼치기' : '접기'}
+                        className="w-7 h-7 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center shrink-0 hover:bg-[#E5E8EB] active:scale-[0.97]"
+                      >
+                        {isCollapsed ? (
+                          <ChevronRight className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
+
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: group.color }}
+                      />
+
+                      {isRenaming ? (
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <input
+                            type="text"
+                            value={renameGroupValue}
+                            onChange={(e) =>
+                              setRenameGroupValue(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleRenameGroup(
+                                  entryType,
+                                  group.category,
+                                  renameGroupValue
+                                );
+                              } else if (e.key === 'Escape') {
+                                setRenamingGroupKey(null);
+                              }
+                            }}
+                            autoFocus
+                            className="h-8 px-2.5 rounded-lg bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6] max-w-[180px]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleRenameGroup(
+                                entryType,
+                                group.category,
+                                renameGroupValue
+                              )
+                            }
+                            className="w-7 h-7 rounded-lg bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRenamingGroupKey(null)}
+                            className="w-7 h-7 rounded-lg bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleGroupCollapsed(group.key)}
+                            className="text-[15.5px] font-bold text-[#191F28] truncate text-left"
+                          >
+                            {group.category}
+                          </button>
+                          <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[11.5px] font-semibold tabular-nums shrink-0">
+                            {group.items.length}건
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRenamingGroupKey(group.key);
+                              setRenameGroupValue(group.category);
+                            }}
+                            aria-label="1차 구분 이름 변경"
+                            title="1차 구분 이름 변경"
+                            className="w-6 h-6 rounded-lg text-[#8B95A1] hover:text-[#191F28] hover:bg-[#F2F4F6] flex items-center justify-center shrink-0"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 우측: 그룹 소계 · 비중(%) · [+ 항목] */}
+                    <div className="flex items-center gap-2.5 shrink-0 tabular-nums">
+                      <div className="text-right">
+                        <div
+                          className={`text-[15.5px] font-bold ${
+                            isIncome ? 'text-[#3182F6]' : 'text-[#191F28]'
+                          }`}
+                        >
+                          {formatWon(group.subtotal)}
+                        </div>
+                        <div className="text-[11px] font-semibold text-[#8B95A1]">
+                          비중 {group.sharePercent}%
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openInlineAdd(entryType, group.category)}
+                        className="h-8 px-2.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>항목</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 그룹 비중 얇은 바 */}
+                  <div className="px-5">
+                    <div className="h-1 rounded-full bg-[#F2F4F6] overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.min(100, Math.max(2, group.sharePercent))}%`,
+                          backgroundColor: group.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* 2차 세부 항목 컴팩트 트리 목록 */}
+                  {!isCollapsed && (
+                    <div className="px-5 pt-2 pb-4">
+                      <div className="border-l-2 border-[#E5E8EB] ml-3 pl-3.5 space-y-1.5">
+                        {group.items.map((item) => {
+                          const isEditing = editingItemId === item.id;
+                          const displaySub =
+                            item.subCategory?.trim() ||
+                            item.itemName?.trim() ||
+                            '세부 항목 미지정';
+                          const displayDesc = item.subCategory?.trim()
+                            ? item.itemName?.trim()
+                            : '';
+
+                          if (isEditing) {
+                            const subChips = isIncome
+                              ? COMMON_INCOME_SUBCATEGORIES
+                              : COMMON_EXPENSE_SUBCATEGORIES;
+
+                            return (
+                              <div
+                                key={item.id}
+                                className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3 border border-[#3182F6]/30"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[12.5px] font-bold text-[#3182F6]">
+                                    세부 항목 편집
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveRow(item.id)}
+                                      className="h-7 px-2.5 rounded-lg bg-[#FFEEF0] text-[#F04452] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span>삭제</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingItemId(null)}
+                                      className="h-7 px-3 rounded-lg bg-[#3182F6] text-[#FFFFFF] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      <span>완료</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                  <div>
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      1차 구분 (다른 사역으로 이동 가능)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      list={`cat-list-${entryType}`}
+                                      value={item.category}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          item.id,
+                                          'category',
+                                          e.target.value
+                                        )
+                                      }
+                                      className="w-full h-9 px-3 rounded-xl bg-[#FFFFFF] text-[13px] font-bold text-[#1B64DA] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                    />
+                                    <datalist id={`cat-list-${entryType}`}>
+                                      {categoryMoveOptions.map((c) => (
+                                        <option key={c} value={c} />
+                                      ))}
+                                    </datalist>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      2차 세부 항목 (세목)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={item.subCategory || ''}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          item.id,
+                                          'subCategory',
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="예: 식비·간식/다과"
+                                      className="w-full h-9 px-3 rounded-xl bg-[#FFFFFF] text-[13px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* 세목 빠른 선택 칩 */}
+                                <div className="flex flex-wrap gap-1.5">
+                                  {subChips.map((sub) => (
+                                    <button
+                                      key={sub}
+                                      type="button"
+                                      onClick={() =>
+                                        handleItemChange(
+                                          item.id,
+                                          'subCategory',
+                                          sub
+                                        )
+                                      }
+                                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                                        item.subCategory === sub
+                                          ? 'bg-[#191F28] text-[#FFFFFF]'
+                                          : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
+                                      }`}
+                                    >
+                                      {sub}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {/* 설명 & 금액 */}
+                                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                                  <div className="sm:col-span-7">
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      설명 (선택)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={item.itemName}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          item.id,
+                                          'itemName',
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="부연 설명 (선택)"
+                                      className="w-full h-9 px-3 rounded-xl bg-[#FFFFFF] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                    />
+                                  </div>
+
+                                  <div className="sm:col-span-5">
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      금액 (원)
+                                    </label>
+                                    <div className="relative flex items-center">
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={
+                                          item.amount > 0
+                                            ? formatNumber(item.amount)
+                                            : ''
+                                        }
+                                        placeholder="0"
+                                        onChange={(e) =>
+                                          handleItemChange(
+                                            item.id,
+                                            'amount',
+                                            parseDigits(e.target.value)
+                                          )
+                                        }
+                                        className="w-full h-9 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-right text-[14.5px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                      />
+                                      <span className="absolute right-3 text-[12px] font-bold text-[#4E5968] pointer-events-none">
+                                        원
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* 간편 단가 자동계산 보조줄 */}
+                                <div className="grid grid-cols-3 gap-2 pt-1">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={editCalcUnit}
+                                    onChange={(e) => {
+                                      const n = parseDigits(e.target.value);
+                                      const nextU = n > 0 ? formatNumber(n) : '';
+                                      setEditCalcUnit(nextU);
+                                      applyEditItemCalculator(
+                                        item.id,
+                                        nextU,
+                                        editCalcQty,
+                                        editCalcQtyUnit,
+                                        editCalcFreq,
+                                        editCalcFreqUnit
+                                      );
+                                    }}
+                                    placeholder="단가(자동계산)"
+                                    className="h-8 px-2.5 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+                                  />
+                                  <div className="flex gap-1">
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={editCalcQty}
+                                      onChange={(e) => {
+                                        const n = parseDigits(e.target.value);
+                                        const nextQ = n > 0 ? String(n) : '';
+                                        setEditCalcQty(nextQ);
+                                        applyEditItemCalculator(
+                                          item.id,
+                                          editCalcUnit,
+                                          nextQ,
+                                          editCalcQtyUnit,
+                                          editCalcFreq,
+                                          editCalcFreqUnit
+                                        );
+                                      }}
+                                      placeholder="수량"
+                                      className="w-full h-8 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+                                    />
+                                    <select
+                                      value={editCalcQtyUnit}
+                                      onChange={(e) => {
+                                        setEditCalcQtyUnit(e.target.value);
+                                        applyEditItemCalculator(
+                                          item.id,
+                                          editCalcUnit,
+                                          editCalcQty,
+                                          e.target.value,
+                                          editCalcFreq,
+                                          editCalcFreqUnit
+                                        );
+                                      }}
+                                      className="h-8 px-1 rounded-lg bg-[#FFFFFF] text-[11px] text-[#4E5968]"
+                                    >
+                                      <option value="명">명</option>
+                                      <option value="개월">개월</option>
+                                      <option value="개">개</option>
+                                      <option value="식">식</option>
+                                    </select>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={editCalcFreq}
+                                      onChange={(e) => {
+                                        const n = parseDigits(e.target.value);
+                                        const nextF = n > 0 ? String(n) : '';
+                                        setEditCalcFreq(nextF);
+                                        applyEditItemCalculator(
+                                          item.id,
+                                          editCalcUnit,
+                                          editCalcQty,
+                                          editCalcQtyUnit,
+                                          nextF,
+                                          editCalcFreqUnit
+                                        );
+                                      }}
+                                      placeholder="횟수"
+                                      className="w-full h-8 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+                                    />
+                                    <select
+                                      value={editCalcFreqUnit}
+                                      onChange={(e) => {
+                                        setEditCalcFreqUnit(e.target.value);
+                                        applyEditItemCalculator(
+                                          item.id,
+                                          editCalcUnit,
+                                          editCalcQty,
+                                          editCalcQtyUnit,
+                                          editCalcFreq,
+                                          e.target.value
+                                        );
+                                      }}
+                                      className="h-8 px-1 rounded-lg bg-[#FFFFFF] text-[11px] text-[#4E5968]"
+                                    >
+                                      <option value="회">회</option>
+                                      <option value="개월">개월</option>
+                                      <option value="박">박</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                {/* 산출식 & 비고 */}
+                                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                                  <div className="sm:col-span-8">
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      산출식
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={item.formula}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          item.id,
+                                          'formula',
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="단가 × 수량 × 횟수"
+                                      className="w-full h-9 px-3 rounded-xl bg-[#FFFFFF] text-[12.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                    />
+                                  </div>
+                                  <div className="sm:col-span-4">
+                                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                                      비고 (선택)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={item.note}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          item.id,
+                                          'note',
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="비고"
+                                      className="w-full h-9 px-3 rounded-xl bg-[#FFFFFF] text-[12.5px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // 기본 컴팩트 행 (클릭 시 인라인 편집 펼침)
+                          return (
+                            <div
+                              key={item.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleOpenEditItem(item)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleOpenEditItem(item);
+                                }
+                              }}
+                              className="group px-3.5 py-2.5 rounded-2xl bg-[#F9FAFB] hover:bg-[#F2F4F6] flex items-center justify-between gap-3 cursor-pointer transition-all duration-150 active:scale-[0.99]"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                  <span className="text-[14px] font-bold text-[#191F28] break-words [word-break:keep-all]">
+                                    {displaySub}
+                                  </span>
+                                  {displayDesc && (
+                                    <span className="text-[12.5px] text-[#4E5968] break-words [word-break:keep-all]">
+                                      {displayDesc}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {(item.formula || item.note) && (
+                                  <div className="mt-0.5 text-[11.5px] text-[#8B95A1] tabular-nums break-words [word-break:keep-all]">
+                                    {item.formula}
+                                    {item.formula && item.note ? ' · ' : ''}
+                                    {item.note}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span
+                                  className={`text-[14.5px] font-bold tabular-nums ${
+                                    isIncome
+                                      ? 'text-[#3182F6]'
+                                      : 'text-[#191F28]'
+                                  }`}
+                                >
+                                  {formatWon(item.amount)}
+                                </span>
+                                <Pencil className="w-3.5 h-3.5 text-[#8B95A1] opacity-60 group-hover:opacity-100 group-hover:text-[#3182F6] transition-opacity" />
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* 이 그룹 내부에 바로 항목 추가 폼 */}
+                        {isAddingHere && (
+                          <div className="pt-1.5">
+                            {renderInlineAddForm(entryType, group.category)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
   };
 
   return (
@@ -293,86 +1439,86 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <h2 className="text-[19px] font-bold text-[#191F28]">
-            예산안 · 청구서 작성
+            예산안 · 청구서
           </h2>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={handleClearAllItems}
-              className="h-10 px-3.5 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12.5px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+              className="h-9 px-3 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all"
             >
-              <Eraser className="w-4 h-4" />
-              전체 비우기
+              <Eraser className="w-3.5 h-3.5" />
+              <span>비우기</span>
             </button>
 
             <button
               type="button"
               onClick={handleResetTemplate}
-              className="h-10 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+              className="h-9 px-3 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all"
             >
-              <RotateCcw className="w-4 h-4" />
-              샘플 복원
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>샘플 복원</span>
             </button>
 
             <button
               type="button"
               onClick={() => window.print()}
-              className="h-10 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+              className="h-9 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all"
             >
               <Printer className="w-4 h-4" />
-              인쇄 / PDF
+              <span>인쇄 / PDF</span>
             </button>
           </div>
         </div>
 
         {/* 1. 문서 템플릿 전환 토글 */}
-        <div className="bg-[#F2F4F6] p-1.5 rounded-2xl grid grid-cols-2 gap-1.5">
+        <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 gap-1">
           <button
             type="button"
             onClick={() => setActiveTemplate('annual_budget')}
-            className={`py-2.5 px-4 rounded-xl text-[14px] font-bold transition-all duration-150 active:scale-[0.97] ${
+            className={`py-2.5 px-4 rounded-xl text-[13.5px] font-bold transition-all duration-150 active:scale-[0.97] ${
               activeTemplate === 'annual_budget'
                 ? 'bg-[#FFFFFF] text-[#191F28]'
                 : 'text-[#4E5968] hover:text-[#191F28]'
             }`}
           >
-            📅 연간 예산안
+            연간 예산안
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTemplate('retreat_claim')}
-            className={`py-2.5 px-4 rounded-xl text-[14px] font-bold transition-all duration-150 active:scale-[0.97] ${
+            className={`py-2.5 px-4 rounded-xl text-[13.5px] font-bold transition-all duration-150 active:scale-[0.97] ${
               activeTemplate === 'retreat_claim'
                 ? 'bg-[#FFFFFF] text-[#191F28]'
                 : 'text-[#4E5968] hover:text-[#191F28]'
             }`}
           >
-            🏕️ 수련회·행사 청구서
+            수련회·행사 청구서
           </button>
         </div>
 
-        {/* 2. 편집 화면 모드 전환: [📝 항목 편집] vs [📄 A4 미리보기] */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-[#F9FAFB] p-2 rounded-2xl">
+        {/* 2. 편집 / A4 미리보기 전환 */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#F9FAFB] p-2 rounded-2xl">
           <div className="bg-[#E5E8EB] p-1 rounded-xl grid grid-cols-2 gap-1 flex-1">
             <button
               type="button"
               onClick={() => setScreenMode('card_editor')}
-              className={`py-2 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.97] ${
                 screenMode === 'card_editor'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <Smartphone className="w-4 h-4 shrink-0" />
-              <span>항목 편집</span>
+              <span>계층 편집</span>
             </button>
 
             <button
               type="button"
               onClick={() => setScreenMode('a4_preview')}
-              className={`py-2 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.97] ${
                 screenMode === 'a4_preview'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
@@ -383,23 +1529,34 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </button>
           </div>
 
+          {screenMode === 'card_editor' &&
+            expenseGroups.length + incomeGroups.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleExpandAll}
+                className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold shrink-0 hover:bg-[#E5E8EB] active:scale-[0.97]"
+              >
+                {allExpanded ? '분류 모두 접기' : '분류 모두 펼치기'}
+              </button>
+            )}
+
           {screenMode === 'a4_preview' && (
             <button
               type="button"
               onClick={() =>
                 setA4ZoomMode((prev) => (prev === 'fit' ? 'actual' : 'fit'))
               }
-              className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
+              className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97]"
             >
               {a4ZoomMode === 'fit' ? (
                 <>
                   <Maximize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>화면 맞춤 (100%로 보기)</span>
+                  <span>화면 맞춤 (100% 보기)</span>
                 </>
               ) : (
                 <>
                   <Minimize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>100% 크기 (화면 맞춤으로)</span>
+                  <span>100% 크기 (화면 맞춤)</span>
                 </>
               )}
             </button>
@@ -407,481 +1564,205 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
         </div>
       </section>
 
+      {/* 토스트 알림 */}
+      {feedback && (
+        <div className="no-print max-w-[980px] mx-auto px-4 py-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold">
+          {feedback}
+        </div>
+      )}
+
       {/* =====================================================================
-          모드 A: 새 예산 항목 직접 작성기(Composer) + 모바일 친화적 카드 에디터
+          모드 A: 계층형 예산 계획 대시보드 & 트리 에디터
          ===================================================================== */}
       {screenMode === 'card_editor' && (
-        <div className="no-print max-w-[980px] mx-auto space-y-4">
-          {/* 1. 실시간 청구/예산 총액 요약 히어로 카드 */}
+        <div className="no-print max-w-[980px] mx-auto space-y-5">
+          {/* 1. 예산 총액 요약 + 사역별 비중 막대 */}
           <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <span className="text-[12px] font-bold text-[#3182F6]">
                   {activeTemplate === 'retreat_claim'
-                    ? '교회 재정 실청구 금액 (A - B)'
-                    : '교회 본부 예산 편성 요청 총액'}
+                    ? '교회 실청구액 (지출 - 자체부담)'
+                    : '총 편성 예산 요청액'}
                 </span>
                 <div className="text-[26px] sm:text-[30px] font-bold text-[#191F28] tabular-nums tracking-tight mt-0.5">
                   {formatWon(netChurchClaimAmount)}
                 </div>
-                <div className="text-[13px] font-semibold text-[#4E5968] tabular-nums mt-0.5 break-words [word-break:keep-all]">
+                <div className="text-[12.5px] font-medium text-[#4E5968] tabular-nums mt-0.5">
                   {numberToKoreanCurrency(netChurchClaimAmount)}
                 </div>
               </div>
 
               <span className="px-3 py-1.5 rounded-full bg-[#F9FAFB] text-[#4E5968] text-[12px] font-bold tabular-nums shrink-0">
-                총 {doc.items.length}개 항목
+                {expenseGroups.length + incomeGroups.length}개 분류 ·{' '}
+                {doc.items.length}건
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5 pt-1 tabular-nums">
+            {/* 지출 / 수입 / 자체부담 요약 캡슐 */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 tabular-nums">
               <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
-                <div className="text-[12px] text-[#8B95A1]">
-                  총 소요 예산 합계 (A)
-                </div>
-                <div className="text-[16px] font-bold text-[#191F28] mt-0.5">
-                  {formatWon(totalGrossAmount)}
+                <div className="text-[11.5px] text-[#8B95A1]">지출 총액</div>
+                <div className="text-[15.5px] font-bold text-[#191F28] mt-0.5">
+                  {formatWon(totalExpense)}
                 </div>
               </div>
 
               <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
-                <div className="text-[12px] text-[#8B95A1]">
-                  자체 부담금 차감 (B)
+                <div className="text-[11.5px] text-[#8B95A1]">
+                  자체 부담금 차감
                 </div>
-                <div className="text-[16px] font-bold text-[#4E5968] mt-0.5">
+                <div className="text-[15.5px] font-bold text-[#4E5968] mt-0.5">
                   -{formatWon(doc.selfBurdenAmount)}
                 </div>
               </div>
+
+              <div className="bg-[#F9FAFB] rounded-2xl p-3.5 col-span-2 sm:col-span-1">
+                <div className="text-[11.5px] text-[#8B95A1]">
+                  별도 수입 항목 합계
+                </div>
+                <div className="text-[15.5px] font-bold text-[#3182F6] mt-0.5">
+                  +{formatWon(totalIncome)}
+                </div>
+              </div>
             </div>
-          </section>
 
-          {/* =================================================================
-              2. [핵심] 새 예산 항목 직접 작성기 (1차 구분 + 2차 세부항목 + 선택 설명)
-             ================================================================= */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-3.5 border-2 border-[#3182F6]/20">
-            <h3 className="text-[16px] font-bold text-[#191F28]">
-              ✍️ 예산 항목 추가
-            </h3>
-
-            <form onSubmit={handleCreateItemFromComposer} className="space-y-3.5">
-              {/* 지출 vs 수입 선택 토글 */}
-              <div className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraftEntryType('expense');
-                    setDraftCategory('');
-                    setDraftSubCategory('');
-                  }}
-                  className={`py-2 px-3 rounded-xl text-[13px] font-bold transition-all duration-150 active:scale-[0.97] ${
-                    draftEntryType === 'expense'
-                      ? 'bg-[#FFFFFF] text-[#191F28]'
-                      : 'text-[#8B95A1] hover:text-[#4E5968]'
-                  }`}
-                >
-                  ➖ 지출 항목
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraftEntryType('income');
-                    setDraftCategory('');
-                    setDraftSubCategory('');
-                  }}
-                  className={`py-2 px-3 rounded-xl text-[13px] font-bold transition-all duration-150 active:scale-[0.97] ${
-                    draftEntryType === 'income'
-                      ? 'bg-[#3182F6] text-[#FFFFFF]'
-                      : 'text-[#8B95A1] hover:text-[#4E5968]'
-                  }`}
-                >
-                  ➕ 수입 항목
-                </button>
-              </div>
-
-              {/* 1행: 1차 구분(필수) + 2차 세부 항목(필수) + 설명(선택) */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                <div className="sm:col-span-4">
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    {draftEntryType === 'income'
-                      ? '1차 구분 (수입원 · 필수)'
-                      : '1차 구분 (사역/행사 · 필수)'}
-                  </label>
-                  <input
-                    ref={composerCategoryRef}
-                    type="text"
-                    value={draftCategory}
-                    onChange={(e) => setDraftCategory(e.target.value)}
-                    placeholder={
-                      draftEntryType === 'income'
-                        ? '예: 교회지원금(예산), 부서회비'
-                        : '예: 예배/양육비, 수련회/행사비'
-                    }
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] font-bold text-[#1B64DA] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
+            {/* 1차 사역별 지출 비중 스택 바 */}
+            {expenseGroups.length > 0 && totalExpense > 0 && (
+              <div className="space-y-2 pt-1">
+                <div className="h-3 rounded-full bg-[#F2F4F6] overflow-hidden flex gap-0.5">
+                  {expenseGroups.map((g) => (
+                    <div
+                      key={g.key}
+                      title={`${g.category}: ${formatWon(g.subtotal)} (${g.sharePercent}%)`}
+                      style={{
+                        width: `${Math.max(2, g.sharePercent)}%`,
+                        backgroundColor: g.color,
+                      }}
+                      className="h-full transition-all duration-300"
+                    />
+                  ))}
                 </div>
 
-                <div className="sm:col-span-4">
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    2차 세부 항목 (세목 · 필수)
-                  </label>
-                  <input
-                    type="text"
-                    value={draftSubCategory}
-                    onChange={(e) => setDraftSubCategory(e.target.value)}
-                    placeholder={
-                      draftEntryType === 'income'
-                        ? '예: 월 정기예산 수령'
-                        : '예: 식비·간식/다과, 교재·도서'
-                    }
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] font-bold text-[#191F28] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-
-                <div className="sm:col-span-4">
-                  <label className="block text-[12px] font-semibold text-[#8B95A1] mb-1">
-                    설명 (선택 입력)
-                  </label>
-                  <input
-                    type="text"
-                    value={draftItemName}
-                    onChange={(e) => setDraftItemName(e.target.value)}
-                    placeholder="예: 리더십 훈련 간식, 목자반 도서"
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-              </div>
-
-              {/* 빠른 1차 구분 & 2차 세부 항목 칩 선택 */}
-              <div className="space-y-1.5">
-                {suggestedCategories.length > 0 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                    <span className="text-[11px] font-semibold text-[#8B95A1] shrink-0">
-                      1차 구분:
-                    </span>
-                    {suggestedCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setDraftCategory(cat)}
-                        className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
-                          draftCategory === cat
-                            ? 'bg-[#3182F6] text-[#FFFFFF]'
-                            : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                  <span className="text-[11px] font-semibold text-[#8B95A1] shrink-0">
-                    2차 세부 항목:
-                  </span>
-                  {suggestedSubCategories.map((sub) => (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] tabular-nums">
+                  {expenseGroups.map((g) => (
                     <button
-                      key={sub}
+                      key={g.key}
                       type="button"
-                      onClick={() => setDraftSubCategory(sub)}
-                      className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold shrink-0 transition-all ${
-                        draftSubCategory === sub
-                          ? 'bg-[#191F28] text-[#FFFFFF]'
-                          : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
-                      }`}
+                      onClick={() =>
+                        setCollapsedGroups((prev) => ({
+                          ...prev,
+                          [g.key]: false,
+                        }))
+                      }
+                      className="flex items-center gap-1.5 text-[#4E5968] hover:text-[#191F28]"
                     >
-                      {sub}
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: g.color }}
+                      />
+                      <span className="font-semibold">{g.category}</span>
+                      <span className="text-[#8B95A1]">{g.sharePercent}%</span>
                     </button>
                   ))}
                 </div>
               </div>
-
-              {/* 2행: 단가 × 수량/인원 × 횟수/개월 자동 계산기 */}
-              <div className="bg-[#F9FAFB] rounded-2xl p-3.5 space-y-2.5">
-                <div className="flex items-center gap-1.5 text-[12px] font-bold text-[#4E5968]">
-                  <Calculator className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>단가 × 수량 × 횟수 자동 계산 (선택)</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <div className="relative flex items-center">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={draftUnitPriceStr}
-                      onChange={(e) => {
-                        const n = parseDigits(e.target.value);
-                        const nextStr = n > 0 ? formatNumber(n) : '';
-                        setDraftUnitPriceStr(nextStr);
-                        recalculateDraftFromMultipliers(
-                          nextStr,
-                          draftQtyStr,
-                          draftQtyUnit,
-                          draftFreqStr,
-                          draftFreqUnit
-                        );
-                      }}
-                      placeholder="단가 (예: 15,000)"
-                      className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                    <span className="absolute right-3 text-[12px] text-[#8B95A1] pointer-events-none">
-                      원
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[#8B95A1] font-bold text-[13px]">
-                      ×
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={draftQtyStr}
-                      onChange={(e) => {
-                        const n = parseDigits(e.target.value);
-                        const nextStr = n > 0 ? formatNumber(n) : '';
-                        setDraftQtyStr(nextStr);
-                        recalculateDraftFromMultipliers(
-                          draftUnitPriceStr,
-                          nextStr,
-                          draftQtyUnit,
-                          draftFreqStr,
-                          draftFreqUnit
-                        );
-                      }}
-                      placeholder="수량/인원 (예: 30)"
-                      className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                    <select
-                      value={draftQtyUnit}
-                      onChange={(e) => {
-                        const nextU = e.target.value;
-                        setDraftQtyUnit(nextU);
-                        recalculateDraftFromMultipliers(
-                          draftUnitPriceStr,
-                          draftQtyStr,
-                          nextU,
-                          draftFreqStr,
-                          draftFreqUnit
-                        );
-                      }}
-                      className="h-10 px-2 rounded-xl bg-[#FFFFFF] text-[12.5px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
-                    >
-                      <option value="명">명</option>
-                      <option value="개">개</option>
-                      <option value="팀">팀</option>
-                      <option value="권">권</option>
-                      <option value="식">식</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[#8B95A1] font-bold text-[13px]">
-                      ×
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={draftFreqStr}
-                      onChange={(e) => {
-                        const n = parseDigits(e.target.value);
-                        const nextStr = n > 0 ? formatNumber(n) : '';
-                        setDraftFreqStr(nextStr);
-                        recalculateDraftFromMultipliers(
-                          draftUnitPriceStr,
-                          draftQtyStr,
-                          draftQtyUnit,
-                          nextStr,
-                          draftFreqUnit
-                        );
-                      }}
-                      placeholder="횟수/기간 (예: 12)"
-                      className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13.5px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                    <select
-                      value={draftFreqUnit}
-                      onChange={(e) => {
-                        const nextFU = e.target.value;
-                        setDraftFreqUnit(nextFU);
-                        recalculateDraftFromMultipliers(
-                          draftUnitPriceStr,
-                          draftQtyStr,
-                          draftQtyUnit,
-                          draftFreqStr,
-                          nextFU
-                        );
-                      }}
-                      className="h-10 px-2 rounded-xl bg-[#FFFFFF] text-[12.5px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
-                    >
-                      <option value="회">회</option>
-                      <option value="개월">개월</option>
-                      <option value="주">주</option>
-                      <option value="박">박</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* 3행: 최종 산출 기초 텍스트 & 최종 금액(원) & 비고 & 추가 버튼 */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                <div className="sm:col-span-5">
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    산출 기초 표기 (직접 수정 가능)
-                  </label>
-                  <input
-                    type="text"
-                    value={draftFormula}
-                    onChange={(e) => setDraftFormula(e.target.value)}
-                    placeholder="예: 월 250,000원 × 12개월"
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-
-                <div className="sm:col-span-4">
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    편성 / 청구 금액 (원)
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={draftAmountStr}
-                      onChange={(e) => {
-                        const n = parseDigits(e.target.value);
-                        setDraftAmountStr(n > 0 ? formatNumber(n) : '');
-                      }}
-                      placeholder="0"
-                      className="w-full h-11 pl-3.5 pr-9 rounded-2xl bg-[#F9FAFB] text-right text-[16px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                    <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
-                      원
-                    </span>
-                  </div>
-                </div>
-
-                <div className="sm:col-span-3">
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    비고 (선택)
-                  </label>
-                  <input
-                    type="text"
-                    value={draftNote}
-                    onChange={(e) => setDraftNote(e.target.value)}
-                    placeholder="예: 목장 회식비 포함"
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                {composerFeedback ? (
-                  <span className="text-[12.5px] font-bold text-[#1B64DA]">
-                    {composerFeedback}
-                  </span>
-                ) : (
-                  <span />
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto h-11 px-6 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>항목 추가</span>
-                </button>
-              </div>
-            </form>
+            )}
           </section>
 
-          {/* 3. 문서 제목 & 사역/행사 기본 개요 (아코디언 카드) */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
+          {/* 2. 지출 예산 계층 트리 */}
+          {renderSection('expense', expenseGroups, totalExpense)}
+
+          {/* 3. 수입 예산 계층 트리 */}
+          {renderSection('income', incomeGroups, totalIncome)}
+
+          {/* 4. 문서 개요 · 자체부담금 · 수령계좌 설정 아코디언 */}
+          <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
             <button
               type="button"
-              onClick={() => setIsOverviewExpanded((prev) => !prev)}
+              onClick={() => setIsDocMetaExpanded((prev) => !prev)}
               className="w-full flex items-center justify-between text-left"
             >
-              <div>
-                <div className="text-[15px] font-bold text-[#191F28]">
-                  1. 문서 제목 · 개요 설정
-                </div>
-                <div className="text-[12.5px] text-[#8B95A1] mt-0.5">
-                  {doc.title} · {doc.eventPeriod}
-                </div>
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-[#3182F6]" />
+                <span className="text-[14px] font-bold text-[#191F28]">
+                  문서 정보 · 자체 부담금 · 수령 계좌 설정
+                </span>
               </div>
-              <span className="px-3 py-1.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 shrink-0">
-                {isOverviewExpanded ? (
+              <span className="px-2.5 py-1 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 shrink-0">
+                {isDocMetaExpanded ? (
                   <>
                     <span>접기</span>
-                    <ChevronUp className="w-4 h-4" />
+                    <ChevronDown className="w-3.5 h-3.5 rotate-180" />
                   </>
                 ) : (
                   <>
-                    <span>수정하기</span>
-                    <ChevronDown className="w-4 h-4" />
+                    <span>열기</span>
+                    <ChevronDown className="w-3.5 h-3.5" />
                   </>
                 )}
               </span>
             </button>
 
-            {isOverviewExpanded && (
-              <div className="space-y-3.5 pt-2 border-t border-[#F2F4F6]">
-                <div>
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    문서 메인 제목
-                  </label>
-                  <input
-                    type="text"
-                    value={doc.title}
-                    onChange={(e) => handleFieldChange('title', e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                    문서 부제목 / 설명
-                  </label>
-                  <input
-                    type="text"
-                    value={doc.subtitle}
-                    onChange={(e) =>
-                      handleFieldChange('subtitle', e.target.value)
-                    }
-                    className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                      청구 부서
+            {isDocMetaExpanded && (
+              <div className="space-y-4 pt-3 border-t border-[#E5E8EB]">
+                {/* 자체 부담금 */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-[#F9FAFB] p-3.5 rounded-2xl">
+                  <div className="sm:col-span-7">
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      자체 부담금 내역
                     </label>
                     <input
                       type="text"
-                      value={doc.department}
+                      value={doc.selfBurdenNote}
                       onChange={(e) =>
-                        handleFieldChange('department', e.target.value)
+                        handleFieldChange('selfBurdenNote', e.target.value)
                       }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      placeholder="예: 참가자 등록비 수입 (25,000원 × 40명)"
+                      className="w-full h-10 px-3 rounded-xl bg-[#FFFFFF] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                     />
                   </div>
+                  <div className="sm:col-span-5">
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      자체 부담금 차감액 (원)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumber(doc.selfBurdenAmount)}
+                        onChange={(e) =>
+                          handleFieldChange(
+                            'selfBurdenAmount',
+                            parseDigits(e.target.value)
+                          )
+                        }
+                        className="w-full h-10 pl-3 pr-8 rounded-xl bg-[#FFFFFF] text-right text-[14.5px] font-bold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                      <span className="absolute right-3 text-[12.5px] font-bold text-[#4E5968] pointer-events-none">
+                        원
+                      </span>
+                    </div>
+                  </div>
+                </div>
 
+                {/* 문서 기본정보 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                      청구/기안 일자
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      문서 제목
                     </label>
                     <input
-                      type="date"
-                      value={doc.requestDate}
+                      type="text"
+                      value={doc.title}
                       onChange={(e) =>
-                        handleFieldChange('requestDate', e.target.value)
+                        handleFieldChange('title', e.target.value)
                       }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
                       사역/행사명
                     </label>
                     <input
@@ -890,12 +1771,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                       onChange={(e) =>
                         handleFieldChange('eventName', e.target.value)
                       }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
                       일시 / 기간
                     </label>
                     <input
@@ -904,27 +1784,12 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                       onChange={(e) =>
                         handleFieldChange('eventPeriod', e.target.value)
                       }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                      장소
-                    </label>
-                    <input
-                      type="text"
-                      value={doc.eventLocation}
-                      onChange={(e) =>
-                        handleFieldChange('eventLocation', e.target.value)
-                      }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                      참석 대상 / 인원
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      대상 / 인원
                     </label>
                     <input
                       type="text"
@@ -932,7 +1797,63 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                       onChange={(e) =>
                         handleFieldChange('participants', e.target.value)
                       }
-                      className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                  </div>
+                </div>
+
+                {/* 계좌 및 청구인 */}
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      입금 은행
+                    </label>
+                    <input
+                      type="text"
+                      value={doc.bankName}
+                      onChange={(e) =>
+                        handleFieldChange('bankName', e.target.value)
+                      }
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-semibold text-[#191F28] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      계좌 번호
+                    </label>
+                    <input
+                      type="text"
+                      value={doc.accountNumber}
+                      onChange={(e) =>
+                        handleFieldChange('accountNumber', e.target.value)
+                      }
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      예금주
+                    </label>
+                    <input
+                      type="text"
+                      value={doc.accountHolder}
+                      onChange={(e) =>
+                        handleFieldChange('accountHolder', e.target.value)
+                      }
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      청구인 성명
+                    </label>
+                    <input
+                      type="text"
+                      value={doc.proposerName}
+                      onChange={(e) =>
+                        handleFieldChange('proposerName', e.target.value)
+                      }
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-bold text-[#191F28] focus:outline-none"
                     />
                   </div>
                 </div>
@@ -940,321 +1861,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             )}
           </section>
 
-          {/* 4. 세부 예산 항목 카드 리스트 */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-[15px] font-bold text-[#191F28]">
-                2. 예산 항목 목록 ({doc.items.length}건)
-              </h3>
-              <button
-                type="button"
-                onClick={handleAddBlankRow}
-                className="h-9 px-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1 shrink-0 active:scale-[0.97] transition-all duration-150"
-              >
-                <Plus className="w-4 h-4" />빈 항목 추가
-              </button>
-            </div>
-
-            {doc.items.length === 0 ? (
-              <div className="bg-[#FFFFFF] rounded-3xl p-10 text-center space-y-2">
-                <div className="text-[15px] font-bold text-[#191F28]">
-                  등록된 예산 항목이 없습니다
-                </div>
-                <p className="text-[13px] text-[#8B95A1]">
-                  위 입력창에서 첫 예산 항목을 추가해 보세요.
-                </p>
-              </div>
-            ) : (
-              doc.items.map((item, idx) => (
-                <div
-                  key={item.id}
-                  className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3"
-                >
-                  {/* 카드 상단 바: 번호 배지 + 지출/수입 토글 + 1차 구분 + 2차 세부 항목 + 순서이동/삭제 */}
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                      <span className="px-2.5 py-1 rounded-xl bg-[#191F28] text-[#FFFFFF] text-[12px] font-bold tabular-nums shrink-0">
-                        #{String(idx + 1).padStart(2, '0')}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleItemChange(
-                            item.id,
-                            'entryType',
-                            item.entryType === 'income' ? 'expense' : 'income'
-                          )
-                        }
-                        className={`px-2.5 py-1 rounded-xl text-[12px] font-bold shrink-0 transition-all active:scale-[0.97] ${
-                          item.entryType === 'income'
-                            ? 'bg-[#3182F6] text-[#FFFFFF]'
-                            : 'bg-[#F2F4F6] text-[#4E5968]'
-                        }`}
-                      >
-                        {item.entryType === 'income' ? '➕ 수입' : '➖ 지출'}
-                      </button>
-                      <input
-                        type="text"
-                        value={item.category}
-                        onChange={(e) =>
-                          handleItemChange(item.id, 'category', e.target.value)
-                        }
-                        placeholder="1차 구분 (예: 예배/양육비)"
-                        aria-label={`항목 ${idx + 1} 1차 구분`}
-                        className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold w-full max-w-[165px] placeholder:text-[#1B64DA]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                      />
-                      <input
-                        type="text"
-                        value={item.subCategory || ''}
-                        onChange={(e) =>
-                          handleItemChange(
-                            item.id,
-                            'subCategory',
-                            e.target.value
-                          )
-                        }
-                        placeholder="2차 세부 항목 (예: 식비·간식/다과)"
-                        aria-label={`항목 ${idx + 1} 2차 세부 항목`}
-                        className="h-9 px-3 rounded-xl bg-[#F9FAFB] text-[#191F28] text-[13px] font-bold w-full max-w-[190px] placeholder:text-[#8B95A1] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleMoveRow(idx, -1)}
-                        disabled={idx === 0}
-                        aria-label="위로 이동"
-                        className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
-                      >
-                        <ChevronUp className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMoveRow(idx, 1)}
-                        disabled={idx === doc.items.length - 1}
-                        aria-label="아래로 이동"
-                        className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center disabled:opacity-30 active:scale-[0.97]"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRow(item.id)}
-                        aria-label="항목 삭제"
-                        className="w-8 h-8 rounded-xl bg-[#FFEEF0] text-[#F04452] flex items-center justify-center active:scale-[0.97]"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 설명(선택) & 예산 금액 */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                    <div className="sm:col-span-7">
-                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                        설명 (선택)
-                      </label>
-                      <input
-                        type="text"
-                        value={item.itemName}
-                        onChange={(e) =>
-                          handleItemChange(item.id, 'itemName', e.target.value)
-                        }
-                        placeholder="부연 설명이 필요할 때만 입력 (선택)"
-                        className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-5">
-                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                        금액 (원)
-                      </label>
-                      <div className="relative flex items-center">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={item.amount > 0 ? formatNumber(item.amount) : ''}
-                          placeholder="0"
-                          onChange={(e) =>
-                            handleItemChange(
-                              item.id,
-                              'amount',
-                              parseDigits(e.target.value)
-                            )
-                          }
-                          className="w-full h-10 pl-3.5 pr-9 rounded-2xl bg-[#F9FAFB] text-right text-[15.5px] font-bold text-[#3182F6] tabular-nums placeholder:text-[#8B95A1]/50 focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                        />
-                        <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
-                          원
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 산출 기초 & 비고 */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                    <div className="sm:col-span-8">
-                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                        산출식 (단가 × 수량 × 횟수)
-                      </label>
-                      <input
-                        type="text"
-                        value={item.formula}
-                        onChange={(e) =>
-                          handleItemChange(item.id, 'formula', e.target.value)
-                        }
-                        placeholder="예: 10,000원 × 40명 × 2회"
-                        className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-4">
-                      <label className="block text-[11.5px] font-semibold text-[#8B95A1] mb-1">
-                        비고 (선택)
-                      </label>
-                      <input
-                        type="text"
-                        value={item.note}
-                        onChange={(e) =>
-                          handleItemChange(item.id, 'note', e.target.value)
-                        }
-                        placeholder="비고 (선택)"
-                        className="w-full h-10 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </section>
-
-          {/* 5. 자체 부담금 및 입금 계좌 · 청구인 서명란 카드 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
-            <h3 className="text-[15px] font-bold text-[#191F28]">
-              3. 자체 부담금 차감 및 수령 계좌 · 청구인 정보
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-[#F9FAFB] p-4 rounded-2xl">
-              <div className="sm:col-span-7">
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  자체 부담금 (B) 산출 내역
-                </label>
-                <input
-                  type="text"
-                  value={doc.selfBurdenNote}
-                  onChange={(e) =>
-                    handleFieldChange('selfBurdenNote', e.target.value)
-                  }
-                  placeholder="예: 참가자 등록비 수입 (25,000원 × 40명)"
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#FFFFFF] text-[13.5px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-
-              <div className="sm:col-span-5">
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  자체 부담금 차감액 (원)
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={formatNumber(doc.selfBurdenAmount)}
-                    onChange={(e) =>
-                      handleFieldChange(
-                        'selfBurdenAmount',
-                        parseDigits(e.target.value)
-                      )
-                    }
-                    className="w-full h-11 pl-3.5 pr-9 rounded-xl bg-[#FFFFFF] text-right text-[15px] font-bold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                  />
-                  <span className="absolute right-3.5 text-[13px] font-bold text-[#4E5968] pointer-events-none">
-                    원
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  입금 은행
-                </label>
-                <input
-                  type="text"
-                  value={doc.bankName}
-                  onChange={(e) =>
-                    handleFieldChange('bankName', e.target.value)
-                  }
-                  className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  계좌 번호
-                </label>
-                <input
-                  type="text"
-                  value={doc.accountNumber}
-                  onChange={(e) =>
-                    handleFieldChange('accountNumber', e.target.value)
-                  }
-                  className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  예금주
-                </label>
-                <input
-                  type="text"
-                  value={doc.accountHolder}
-                  onChange={(e) =>
-                    handleFieldChange('accountHolder', e.target.value)
-                  }
-                  className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-              <div className="sm:col-span-2">
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  하단 청구/제출 문구
-                </label>
-                <input
-                  type="text"
-                  value={doc.purposeNote}
-                  onChange={(e) =>
-                    handleFieldChange('purposeNote', e.target.value)
-                  }
-                  className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[13.5px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[12px] font-semibold text-[#4E5968] mb-1">
-                  청구인 ({doc.proposerRole}) 성명
-                </label>
-                <input
-                  type="text"
-                  value={doc.proposerName}
-                  onChange={(e) =>
-                    handleFieldChange('proposerName', e.target.value)
-                  }
-                  className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* 6. 모바일 하단 빠른 미리보기/인쇄 바 */}
+          {/* 5. 하단 고정 미리보기/인쇄 바 */}
           <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] text-[#8B95A1]">
-                실청구/편성 요청 총액 ({doc.items.length}개 항목)
+                실청구/요청 총액 ({doc.items.length}건)
               </div>
               <div className="text-[16px] font-bold tabular-nums truncate">
                 {formatWon(netChurchClaimAmount)}
@@ -1284,7 +1895,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       )}
 
       {/* =====================================================================
-          모드 B & 실제 인쇄 DOM: A4 1장 출력용 예산안 / 재정 청구서 본문
+          모드 B & 실제 인쇄 DOM: 1차 구분별 그룹핑 + 소계 포함 A4 예산서
          ===================================================================== */}
       <div
         className={`max-w-[980px] mx-auto print-force-show ${
@@ -1322,7 +1933,6 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   />
                 </div>
 
-                {/* 우측 4칸 결재란 */}
                 {settings.showApprovalBox && (
                   <table className="border-collapse border border-[#191F28] text-center shrink-0">
                     <tbody>
@@ -1358,7 +1968,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 )}
               </div>
 
-              {/* 2. 한글 금액 자동 변환기 강조 박스 */}
+              {/* 한글 금액 강조 박스 */}
               <div className="mt-4 bg-[#F9FAFB] border-2 border-[#191F28] rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="text-[12.5px] font-bold text-[#4E5968]">
                   {activeTemplate === 'retreat_claim'
@@ -1370,7 +1980,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </div>
               </div>
 
-              {/* 3. 행사/사역 기본 개요 테이블 */}
+              {/* 1. 사역 및 청구 개요 */}
               <div className="mt-3.5">
                 <div className="text-[11.5px] font-bold text-[#191F28] mb-1">
                   1. 사역 및 청구 개요
@@ -1460,16 +2070,16 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </table>
               </div>
 
-              {/* 4. 인라인 편집 가능한 산출 기초 테이블 */}
+              {/* 2. 계층형(1차 구분별 그룹 + 소계) 산출 기초 테이블 */}
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11.5px] font-bold text-[#191F28]">
-                    2. 세부 항목별 산출 기초 명세 (단가 × 수량 × 횟수)
+                    2. 분류별 예산 산출 기초 명세 (단가 × 수량 × 횟수)
                   </span>
                   <button
                     type="button"
-                    onClick={handleAddBlankRow}
-                    className="no-print px-3 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                    onClick={handleAddBlankRowForA4}
+                    className="no-print px-3 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97]"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>빈 항목 행 추가</span>
@@ -1482,10 +2092,10 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                       <th className="border border-[#191F28] py-1.5 px-2 w-[16%]">
                         1차 구분
                       </th>
-                      <th className="border border-[#191F28] py-1.5 px-2 w-[25%] text-left">
+                      <th className="border border-[#191F28] py-1.5 px-2 w-[26%] text-left">
                         2차 세부 항목 · 설명
                       </th>
-                      <th className="border border-[#191F28] py-1.5 px-2 w-[29%] text-left">
+                      <th className="border border-[#191F28] py-1.5 px-2 w-[28%] text-left">
                         산출식 (단가 × 수량 × 횟수)
                       </th>
                       <th className="border border-[#191F28] py-1.5 px-2 w-[15%] text-right">
@@ -1497,119 +2107,187 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {doc.items.map((item) => (
-                      <tr key={item.id} className="group">
-                        <td className="border border-[#E5E8EB] border-x-[#191F28] p-1.5 align-top">
-                          <AutoResizeTextarea
-                            value={item.category}
-                            placeholder="1차 구분"
-                            onChange={(e) =>
-                              handleItemChange(
-                                item.id,
-                                'category',
-                                e.target.value
-                              )
-                            }
-                            className="text-center font-semibold text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
-                          />
-                        </td>
-                        <td className="border border-[#E5E8EB] p-1.5 align-top space-y-0.5">
-                          <AutoResizeTextarea
-                            value={item.subCategory || ''}
-                            placeholder="2차 세부 항목 입력"
-                            onChange={(e) =>
-                              handleItemChange(
-                                item.id,
-                                'subCategory',
-                                e.target.value
-                              )
-                            }
-                            className="font-bold text-[#191F28] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
-                          />
-                          {(item.itemName || !item.subCategory) && (
-                            <AutoResizeTextarea
-                              value={item.itemName}
-                              placeholder="설명 (선택)"
-                              onChange={(e) =>
-                                handleItemChange(
-                                  item.id,
-                                  'itemName',
-                                  e.target.value
-                                )
-                              }
-                              className="text-[10.5px] text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
-                            />
-                          )}
-                        </td>
-                        <td className="border border-[#E5E8EB] p-1.5 align-top">
-                          <AutoResizeTextarea
-                            value={item.formula}
-                            placeholder="단가 × 수량 × 횟수"
-                            onChange={(e) =>
-                              handleItemChange(
-                                item.id,
-                                'formula',
-                                e.target.value
-                              )
-                            }
-                            className="text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
-                          />
-                        </td>
-                        <td className="border border-[#E5E8EB] p-1.5 align-top">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={formatNumber(item.amount)}
-                            onChange={(e) =>
-                              handleItemChange(
-                                item.id,
-                                'amount',
-                                parseDigits(e.target.value)
-                              )
-                            }
-                            className="w-full text-right font-bold text-[#191F28] bg-transparent focus:outline-none focus:bg-[#F9FAFB] rounded px-1 py-0.5 tabular-nums"
-                          />
-                        </td>
-                        <td className="border border-[#E5E8EB] border-r-[#191F28] p-1.5 align-top">
-                          <div className="flex items-start gap-1">
-                            <AutoResizeTextarea
-                              value={item.note}
-                              onChange={(e) =>
-                                handleItemChange(
-                                  item.id,
-                                  'note',
-                                  e.target.value
-                                )
-                              }
-                              placeholder="-"
-                              className="text-center text-[11px] text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveRow(item.id)}
-                              title="행 삭제"
-                              className="no-print text-[#8B95A1] hover:text-[#F04452] p-0.5 shrink-0"
+                    {expenseGroups.map((group) => (
+                      <React.Fragment key={group.key}>
+                        {group.items.map((item, idx) => (
+                          <tr key={item.id}>
+                            {idx === 0 && (
+                              <td
+                                rowSpan={group.items.length}
+                                className="border border-[#191F28] bg-[#F9FAFB]/70 p-2 text-center font-bold text-[#191F28] align-middle whitespace-pre-wrap break-words [word-break:keep-all]"
+                              >
+                                <div>{group.category}</div>
+                                <div className="text-[9.5px] font-normal text-[#8B95A1] mt-0.5">
+                                  ({group.sharePercent}%)
+                                </div>
+                              </td>
+                            )}
+                            <td className="border border-[#E5E8EB] p-1.5 align-top space-y-0.5">
+                              <AutoResizeTextarea
+                                value={item.subCategory || ''}
+                                placeholder="2차 세부 항목"
+                                onChange={(e) =>
+                                  handleItemChange(
+                                    item.id,
+                                    'subCategory',
+                                    e.target.value
+                                  )
+                                }
+                                className="font-bold text-[#191F28] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
+                              />
+                              {(item.itemName || !item.subCategory) && (
+                                <AutoResizeTextarea
+                                  value={item.itemName}
+                                  placeholder="설명 (선택)"
+                                  onChange={(e) =>
+                                    handleItemChange(
+                                      item.id,
+                                      'itemName',
+                                      e.target.value
+                                    )
+                                  }
+                                  className="text-[10.5px] text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
+                                />
+                              )}
+                            </td>
+                            <td className="border border-[#E5E8EB] p-1.5 align-top">
+                              <AutoResizeTextarea
+                                value={item.formula}
+                                placeholder="단가 × 수량 × 횟수"
+                                onChange={(e) =>
+                                  handleItemChange(
+                                    item.id,
+                                    'formula',
+                                    e.target.value
+                                  )
+                                }
+                                className="text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
+                              />
+                            </td>
+                            <td className="border border-[#E5E8EB] p-1.5 align-top">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={formatNumber(item.amount)}
+                                onChange={(e) =>
+                                  handleItemChange(
+                                    item.id,
+                                    'amount',
+                                    parseDigits(e.target.value)
+                                  )
+                                }
+                                className="w-full text-right font-bold text-[#191F28] bg-transparent focus:outline-none focus:bg-[#F9FAFB] rounded px-1 py-0.5 tabular-nums"
+                              />
+                            </td>
+                            <td className="border border-[#E5E8EB] border-r-[#191F28] p-1.5 align-top">
+                              <div className="flex items-start gap-1">
+                                <AutoResizeTextarea
+                                  value={item.note}
+                                  onChange={(e) =>
+                                    handleItemChange(
+                                      item.id,
+                                      'note',
+                                      e.target.value
+                                    )
+                                  }
+                                  placeholder="-"
+                                  className="text-center text-[11px] text-[#4E5968] focus:bg-[#F9FAFB] rounded px-1 py-0.5"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveRow(item.id)}
+                                  title="행 삭제"
+                                  className="no-print text-[#8B95A1] hover:text-[#F04452] p-0.5 shrink-0"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {/* 2건 이상 묶인 그룹은 사역별 소계 행 자동 출력 */}
+                        {group.items.length >= 2 && (
+                          <tr className="bg-[#F9FAFB] font-semibold text-[11px]">
+                            <td
+                              colSpan={3}
+                              className="border border-[#191F28] py-1.5 px-2.5 text-right text-[#4E5968]"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                              [{group.category}] 소계 ({group.items.length}건)
+                            </td>
+                            <td className="border border-[#191F28] py-1.5 px-2 text-right font-bold text-[#191F28]">
+                              {formatWon(group.subtotal)}
+                            </td>
+                            <td className="border border-[#191F28] py-1.5 px-2 text-center text-[10px] text-[#8B95A1]">
+                              비중 {group.sharePercent}%
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
 
-                    {/* 합계 및 자체부담금 / 교회 재정 청구액 자동 합산 영역 */}
+                    {/* 수입 예산 항목이 있는 경우 별도 구분 출력 */}
+                    {incomeGroups.length > 0 && (
+                      <>
+                        <tr className="bg-[#E8F3FF]/60 font-bold text-[11px] text-[#1B64DA]">
+                          <td
+                            colSpan={5}
+                            className="border border-[#191F28] py-1.5 px-2.5 text-left"
+                          >
+                            [별도 수입 예산 항목]
+                          </td>
+                        </tr>
+                        {incomeGroups.map((group) => (
+                          <React.Fragment key={group.key}>
+                            {group.items.map((item, idx) => (
+                              <tr key={item.id}>
+                                {idx === 0 && (
+                                  <td
+                                    rowSpan={group.items.length}
+                                    className="border border-[#191F28] bg-[#F9FAFB]/70 p-2 text-center font-bold text-[#1B64DA] align-middle"
+                                  >
+                                    {group.category}
+                                  </td>
+                                )}
+                                <td className="border border-[#E5E8EB] p-1.5 align-top">
+                                  <div className="font-bold text-[#191F28]">
+                                    {item.subCategory || item.itemName}
+                                  </div>
+                                  {item.subCategory && item.itemName && (
+                                    <div className="text-[10.5px] text-[#4E5968]">
+                                      {item.itemName}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="border border-[#E5E8EB] p-1.5 align-top text-[#4E5968]">
+                                  {item.formula}
+                                </td>
+                                <td className="border border-[#E5E8EB] p-1.5 align-top text-right font-bold text-[#3182F6]">
+                                  +{formatNumber(item.amount)}
+                                </td>
+                                <td className="border border-[#E5E8EB] border-r-[#191F28] p-1.5 align-top text-center text-[11px] text-[#4E5968]">
+                                  {item.note || '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </>
+                    )}
+
+                    {/* 합계 및 자체부담금 / 교회 재정 청구액 */}
                     <tr className="bg-[#F9FAFB] border-t-2 border-[#191F28] font-semibold">
                       <td
                         colSpan={3}
                         className="border border-[#191F28] py-2 px-3 text-right text-[#4E5968]"
                       >
-                        총 소요 예산 합계 (A)
+                        총 지출 소요 예산 합계 (A)
                       </td>
                       <td className="border border-[#191F28] py-2 px-2 text-right font-bold text-[#191F28]">
-                        {formatWon(totalGrossAmount)}
+                        {formatWon(totalExpense)}
                       </td>
                       <td className="border border-[#191F28] py-2 px-2 text-center text-[10.5px] text-[#8B95A1]">
-                        총 {doc.items.length}개 항목
+                        {expenseGroups.length}개 분류
                       </td>
                     </tr>
 
@@ -1671,7 +2349,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 </table>
               </div>
 
-              {/* 5. 입금 계좌 정보 테이블 */}
+              {/* 3. 입금 계좌 정보 */}
               <div className="mt-4">
                 <div className="text-[11.5px] font-bold text-[#191F28] mb-1">
                   3. 예산 수령 지정 입금 계좌 정보
@@ -1721,7 +2399,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               </div>
             </div>
 
-            {/* 6. 하단 청구 문구 및 청구인 서명란 */}
+            {/* 하단 청구 문구 및 청구인 서명란 */}
             <div className="pt-4 mt-4 border-t border-[#191F28] space-y-4">
               <AutoResizeTextarea
                 value={doc.purposeNote}
