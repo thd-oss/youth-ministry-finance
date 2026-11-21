@@ -614,7 +614,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 <div className="text-[14px] font-bold text-[#191F28]">
                   {isCompressing
                     ? '사진 불러오는 중...'
-                    : '📸 영수증 촬영 / 사진 선택'}
+                    : '영수증 촬영 / 사진 선택'}
                 </div>
               </button>
             )}

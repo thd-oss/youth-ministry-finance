@@ -265,7 +265,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             >
               <Smartphone className="w-4 h-4 shrink-0" />
               <span>
-                📱 영수증 검수 ({allExpenseEvidenceItems.length})
+                영수증 검수 ({allExpenseEvidenceItems.length})
               </span>
             </button>
 
@@ -279,7 +279,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               }`}
             >
               <Eye className="w-4 h-4 shrink-0" />
-              <span>📄 A4 미리보기</span>
+              <span>A4 미리보기</span>
             </button>
           </div>
 
@@ -456,8 +456,8 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                         : 'bg-[#FFFFFF] text-[#4E5968]'
                     }`}
                   >
-                    <Sparkles className="w-3.5 h-3.5" />✨ 스캔 보정 필터{' '}
-                    {scanFilter ? 'ON' : 'OFF'}
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>스캔 보정 필터 {scanFilter ? 'ON' : 'OFF'}</span>
                   </button>
 
                   <button
@@ -767,7 +767,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                               <span>
                                 {isUploading
                                   ? '저장 중...'
-                                  : '📷 사진 등록'}
+                                  : '사진 등록'}
                               </span>
                               <input
                                 type="file"

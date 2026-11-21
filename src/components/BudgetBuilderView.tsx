@@ -1471,7 +1471,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                     onClick={handleAddBlankRow}
                     className="no-print px-3 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
                   >
-                    <Plus className="w-3.5 h-3.5" />+ 빈 항목 행 추가
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>빈 항목 행 추가</span>
                   </button>
                 </div>
 

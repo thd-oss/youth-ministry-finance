@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   FileCheck2,
+  Minus,
   Plus,
   Printer,
   Rocket,
@@ -301,7 +302,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="sm:col-span-6 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Camera className="w-5 h-5" />
-            <span>📸 영수증 AI 스캔</span>
+            <span>영수증 AI 스캔</span>
           </button>
 
           <button
@@ -309,8 +310,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             onClick={() => onOpenNewTransaction(false, 'expense')}
             className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#191F28] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
           >
-            <Plus className="w-4 h-4" />
-            <span>➖ 지출 입력</span>
+            <Minus className="w-4 h-4" />
+            <span>지출 입력</span>
           </button>
 
           <button
@@ -319,7 +320,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
           >
             <Plus className="w-4 h-4" />
-            <span>➕ 수입 입력</span>
+            <span>수입 입력</span>
           </button>
         </div>
       </section>

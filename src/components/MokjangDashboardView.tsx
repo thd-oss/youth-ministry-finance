@@ -275,7 +275,8 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                 onClick={handleAddMokjang}
                 className="px-3 py-1.5 rounded-full bg-[#3182F6] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
               >
-                <Plus className="w-3.5 h-3.5" />+ 목장 추가
+                <Plus className="w-3.5 h-3.5" />
+                <span>목장 추가</span>
               </button>
             </div>
 
