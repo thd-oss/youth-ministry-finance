@@ -37,6 +37,7 @@ import {
   INITIAL_ANNUAL_BUDGET,
   INITIAL_RETREAT_BUDGET,
 } from '../utils/sampleData';
+import { syncBudgetDocumentWithDepartment } from '../utils/syncManager';
 import { A4ScalePreview } from './A4ScalePreview';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 
@@ -630,11 +631,17 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   };
 
   const handleResetTemplate = () => {
-    const defaultDoc =
+    const rawDefaultDoc =
       activeTemplate === 'retreat_claim'
         ? INITIAL_RETREAT_BUDGET
         : INITIAL_ANNUAL_BUDGET;
-    onUpdateBudget(activeTemplate, defaultDoc);
+    const { doc: syncedDefaultDoc } = syncBudgetDocumentWithDepartment(
+      rawDefaultDoc,
+      settings.departmentName,
+      undefined,
+      settings.authorName
+    );
+    onUpdateBudget(activeTemplate, syncedDefaultDoc);
     setEditingItemId(null);
     setAddingTarget(null);
     setRenamingGroupKey(null);
@@ -2268,6 +2275,20 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         handleFieldChange('title', e.target.value)
                       }
                       className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-semibold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11.5px] font-semibold text-[#4E5968] mb-1">
+                      청구 부서
+                    </label>
+                    <input
+                      type="text"
+                      value={doc.department}
+                      onChange={(e) =>
+                        handleFieldChange('department', e.target.value)
+                      }
+                      placeholder={settings.departmentName}
+                      className="w-full h-10 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
                     />
                   </div>
                   <div>

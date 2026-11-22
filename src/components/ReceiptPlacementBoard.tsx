@@ -33,6 +33,7 @@ import {
   SlotCoord,
   swapSlots,
 } from '../utils/receiptLayoutEngine';
+import { ReceiptImg, ResolvedSvgImage } from './ReceiptImg';
 
 export interface ReceiptPlacementBoardProps {
   pages: ReceiptPageLayout[];
@@ -112,7 +113,7 @@ function renderSegmentGroupFallbackPreview(args: {
               preserveAspectRatio="xMidYMid meet"
               className="w-full h-full block"
             >
-              <image
+              <ResolvedSvgImage
                 href={tx.receiptImage}
                 x={0}
                 y={0}
@@ -527,9 +528,11 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                             })
                           )
                         ) : tx.receiptImage ? (
-                          <img
+                          <ReceiptImg
                             src={tx.receiptImage}
                             alt={`증빙 ${tx.evidenceNo}`}
+                            compactFallback
+                            fallbackHeightClass="h-full min-h-[110px]"
                             draggable={false}
                             className={`w-full h-full object-contain block pointer-events-none ${
                               scanFilter ? 'receipt-scan-filter' : ''

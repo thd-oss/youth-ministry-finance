@@ -39,6 +39,8 @@ import {
   Transaction,
 } from '../types/finance';
 import { compressReceiptImage } from '../utils/imageCompressor';
+import { resolveReceiptDisplayUrl } from '../utils/receiptImageLoader';
+import { ReceiptImg, ResolvedSvgImage } from './ReceiptImg';
 import {
   formatNumber,
   formatShortDate,
@@ -151,6 +153,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     useState<InspectorFilter>('all');
   const [isConfigExpanded, setIsConfigExpanded] = useState<boolean>(false);
   const [uploadingTxId, setUploadingTxId] = useState<string | null>(null);
+  const [uploadErrorMsg, setUploadErrorMsg] = useState<string | null>(null);
   const [isPreparingPrint, setIsPreparingPrint] = useState<boolean>(false);
 
   // receiptMeta가 없는 레거시 영수증 이미지의 런타임 naturalWidth/Height 보강 캐시
@@ -579,6 +582,14 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     if (isPreparingPrint) return;
     setIsPreparingPrint(true);
     try {
+      // 비분할 Drive 원본 영수증도 인쇄 전에 모두 인증 Blob URL로 선해석
+      await Promise.allSettled(
+        allExpenseEvidenceItems
+          .map((tx) => tx.receiptImage)
+          .filter((src): src is string => Boolean(src))
+          .map((src) => resolveReceiptDisplayUrl(src))
+      );
+
       if (compositeDescriptors.length > 0) {
         const renderedByKey = await ensureAllPrintSlicesReady(
           compositeDescriptors.map((d) => d.task),
@@ -629,6 +640,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
   ) => {
     if (!file || !onQuickSaveTransaction) return;
     setUploadingTxId(tx.id);
+    setUploadErrorMsg(null);
     try {
       const compressed = await compressReceiptImage(file, 1200, 0.8);
       const { evidenceNo: _ev, runningBalance: _rb, ...rawTx } = tx;
@@ -647,7 +659,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
         },
       }));
     } catch (err) {
-      console.error('영수증 즉시 압축 실패:', err);
+      setUploadErrorMsg(
+        err instanceof Error
+          ? err.message
+          : '영수증 사진을 처리하지 못했습니다. 다른 사진으로 다시 시도해 주세요.'
+      );
     } finally {
       setUploadingTxId(null);
     }
@@ -708,7 +724,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               viewBox={`${sx} ${sy} ${sw} ${sh}`}
               preserveAspectRatio="xMidYMid meet"
             >
-              <image
+              <ResolvedSvgImage
                 href={tx.receiptImage}
                 x={0}
                 y={0}
@@ -747,6 +763,21 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             {isPreparingPrint ? '인쇄 준비 중...' : '인쇄 / PDF 저장'}
           </button>
         </div>
+
+        {uploadErrorMsg && (
+          <div className="px-3.5 py-2.5 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12.5px] font-semibold flex items-center justify-between gap-2">
+            <span className="min-w-0 break-words [word-break:keep-all]">
+              {uploadErrorMsg}
+            </span>
+            <button
+              type="button"
+              onClick={() => setUploadErrorMsg(null)}
+              className="px-2 py-1 rounded-lg bg-[#FFFFFF] text-[#F04452] text-[11.5px] font-bold shrink-0"
+            >
+              닫기
+            </button>
+          </div>
+        )}
 
         {/* 3단 화면 모드 전환 탭 + 상시 노출 1행2열 / 2행2열 토글 */}
         <div className="flex flex-col gap-2.5 bg-[#F9FAFB] p-2 sm:p-2.5 rounded-2xl">
@@ -1251,9 +1282,10 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                             </button>
                           ) : null}
 
-                          <img
+                          <ReceiptImg
                             src={tx.receiptImage}
                             alt={`증빙 ${tx.evidenceNo}`}
+                            fallbackHeightClass="min-h-[180px]"
                             onLoad={(e) => handleRecordImageDimensions(tx.id, e)}
                             className={`max-h-[260px] w-full object-contain rounded-xl bg-[#FFFFFF] ${
                               scanFilter ? 'receipt-scan-filter' : ''
@@ -1270,12 +1302,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
-                                onChange={(e) =>
-                                  handleInlinePhotoUpload(
-                                    tx,
-                                    e.target.files?.[0]
-                                  )
-                                }
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  void handleInlinePhotoUpload(tx, f);
+                                }}
                               />
                             </label>
 
@@ -1322,12 +1353,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
-                                onChange={(e) =>
-                                  handleInlinePhotoUpload(
-                                    tx,
-                                    e.target.files?.[0]
-                                  )
-                                }
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  void handleInlinePhotoUpload(tx, f);
+                                }}
                               />
                             </label>
 
@@ -1987,9 +2017,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                         <span>긴 영수증 · 분할</span>
                                       </button>
                                     )}
-                                    <img
+                                    <ReceiptImg
                                       src={tx.receiptImage}
                                       alt={`증빙 ${tx.evidenceNo} - ${tx.title}`}
+                                      compactFallback
+                                      fallbackHeightClass="h-full min-h-[120px]"
                                       onLoad={(e) =>
                                         handleRecordImageDimensions(tx.id, e)
                                       }

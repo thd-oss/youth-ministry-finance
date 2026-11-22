@@ -6,6 +6,7 @@ import {
   MokjangGroup,
   PaymentMethod,
 } from '../types/finance';
+import { resolveReceiptDisplayUrl } from './receiptImageLoader';
 
 export interface ReceiptAiAnalysisResult {
   amount: number;
@@ -284,13 +285,32 @@ export async function analyzeReceiptWithGemini(params: {
 
   const targetModel = model.replace(/^models\//, '').trim();
 
-  const commaIndex = imageDataUrl.indexOf(',');
+  let effectiveDataUrl = imageDataUrl;
+  if (!effectiveDataUrl.startsWith('data:')) {
+    const resolvedUrl = await resolveReceiptDisplayUrl(effectiveDataUrl);
+    if (!resolvedUrl) {
+      throw new Error('영수증 이미지를 불러올 수 없습니다. 구글 로그인 상태를 확인해 주세요.');
+    }
+    const imgRes = await fetch(resolvedUrl);
+    if (!imgRes.ok) {
+      throw new Error('영수증 이미지를 불러올 수 없습니다. 구글 로그인 상태를 확인해 주세요.');
+    }
+    const imgBlob = await imgRes.blob();
+    effectiveDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('이미지 데이터 변환에 실패했습니다.'));
+      reader.readAsDataURL(imgBlob);
+    });
+  }
+
+  const commaIndex = effectiveDataUrl.indexOf(',');
   if (commaIndex === -1) {
     throw new Error('올바른 이미지 데이터 형식이 아닙니다.');
   }
 
-  const header = imageDataUrl.slice(0, commaIndex);
-  const base64Data = imageDataUrl.slice(commaIndex + 1);
+  const header = effectiveDataUrl.slice(0, commaIndex);
+  const base64Data = effectiveDataUrl.slice(commaIndex + 1);
   const mimeMatch = header.match(/data:(.*?);/);
   const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
 
@@ -298,7 +318,7 @@ export async function analyzeReceiptWithGemini(params: {
   let finalBase64 = base64Data;
 
   if (mimeType.includes('svg')) {
-    const rasterized = await rasterizeDataUrlToJpeg(imageDataUrl);
+    const rasterized = await rasterizeDataUrlToJpeg(effectiveDataUrl);
     finalMimeType = 'image/jpeg';
     finalBase64 = rasterized.split(',')[1];
   }

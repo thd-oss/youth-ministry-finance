@@ -449,6 +449,149 @@ export interface MokjangSpendStat {
   transactions: ProcessedTransaction[];
 }
 
+const LEGACY_SAMPLE_DEPARTMENT_NAME = '은혜교회 청년부';
+
+function replaceExactSubstring(
+  text: string,
+  candidates: string[],
+  replacement: string
+): string {
+  let result = text;
+  for (const oldVal of candidates) {
+    if (oldVal && result.includes(oldVal)) {
+      result = result.split(oldVal).join(replacement);
+    }
+  }
+  return result;
+}
+
+/**
+ * 단일 예산안/청구서 문서의 부서명·제목·장소·예금주·작성자를
+ * 전역 기본 정보(settings.departmentName / authorName)와 일관되게 동기화합니다.
+ * 사용자가 문서별로 의도적으로 지정한 별도 부서명은 덮어쓰지 않습니다.
+ */
+export function syncBudgetDocumentWithDepartment(
+  doc: BudgetDocument,
+  nextDeptName: string,
+  prevDeptName?: string,
+  nextAuthorName?: string,
+  prevAuthorName?: string
+): { doc: BudgetDocument; changed: boolean } {
+  const cleanNextDept = nextDeptName.trim();
+  const cleanPrevDept = prevDeptName?.trim() || '';
+  const cleanNextAuthor = nextAuthorName?.trim() || '';
+  const cleanPrevAuthor = prevAuthorName?.trim() || '';
+
+  const deptCandidates: string[] = [];
+  if (cleanPrevDept && cleanPrevDept !== cleanNextDept) {
+    deptCandidates.push(cleanPrevDept);
+  }
+  if (
+    cleanNextDept &&
+    cleanNextDept !== LEGACY_SAMPLE_DEPARTMENT_NAME &&
+    !deptCandidates.includes(LEGACY_SAMPLE_DEPARTMENT_NAME)
+  ) {
+    deptCandidates.push(LEGACY_SAMPLE_DEPARTMENT_NAME);
+  }
+
+  let changed = false;
+  let nextDoc = doc;
+
+  if (cleanNextDept) {
+    const curDept = (doc.department || '').trim();
+    const shouldUpdateDept =
+      !curDept || deptCandidates.includes(curDept);
+    const nextDepartment = shouldUpdateDept ? cleanNextDept : doc.department;
+    const nextTitle = replaceExactSubstring(
+      doc.title || '',
+      deptCandidates,
+      cleanNextDept
+    );
+    const nextLocation = replaceExactSubstring(
+      doc.eventLocation || '',
+      deptCandidates,
+      cleanNextDept
+    );
+    const nextAccountHolder = replaceExactSubstring(
+      doc.accountHolder || '',
+      deptCandidates,
+      cleanNextDept
+    );
+
+    if (
+      nextDepartment !== doc.department ||
+      nextTitle !== doc.title ||
+      nextLocation !== doc.eventLocation ||
+      nextAccountHolder !== doc.accountHolder
+    ) {
+      changed = true;
+      nextDoc = {
+        ...nextDoc,
+        department: nextDepartment,
+        title: nextTitle,
+        eventLocation: nextLocation,
+        accountHolder: nextAccountHolder,
+      };
+    }
+  }
+
+  if (cleanNextAuthor) {
+    const curProposer = (nextDoc.proposerName || '').trim();
+    if (
+      !curProposer ||
+      (cleanPrevAuthor && curProposer === cleanPrevAuthor)
+    ) {
+      if (nextDoc.proposerName !== cleanNextAuthor) {
+        changed = true;
+        nextDoc = {
+          ...nextDoc,
+          proposerName: cleanNextAuthor,
+        };
+      }
+    }
+  }
+
+  return { doc: nextDoc, changed };
+}
+
+/**
+ * 연간 예산안 · 수련회 청구서 전체를 전역 부서명(SSOT)과 동기화합니다.
+ */
+export function syncBudgetsWithDepartment(
+  budgets: BudgetsMap,
+  nextDeptName: string,
+  prevDeptName?: string,
+  nextAuthorName?: string,
+  prevAuthorName?: string
+): { budgets: BudgetsMap; changed: boolean } {
+  const annual = syncBudgetDocumentWithDepartment(
+    budgets.annual_budget,
+    nextDeptName,
+    prevDeptName,
+    nextAuthorName,
+    prevAuthorName
+  );
+  const retreat = syncBudgetDocumentWithDepartment(
+    budgets.retreat_claim,
+    nextDeptName,
+    prevDeptName,
+    nextAuthorName,
+    prevAuthorName
+  );
+
+  if (!annual.changed && !retreat.changed) {
+    return { budgets, changed: false };
+  }
+
+  return {
+    budgets: {
+      annual_budget: annual.doc,
+      retreat_claim: retreat.doc,
+    },
+    changed: true,
+  };
+}
+
 export const SyncManager = {
   loadTransactions(): Transaction[] {
     try {
@@ -596,14 +739,19 @@ export const SyncManager = {
     settings: AppSettings;
     receiptLayouts: ReceiptBookLayoutsMap;
   } {
-    const budgets: BudgetsMap = {
-      retreat_claim: INITIAL_RETREAT_BUDGET,
-      annual_budget: INITIAL_ANNUAL_BUDGET,
-    };
     const nextSettings: AppSettings = {
       ...this.loadSettings(),
       isProductionMode: false,
     };
+    const { budgets } = syncBudgetsWithDepartment(
+      {
+        retreat_claim: INITIAL_RETREAT_BUDGET,
+        annual_budget: INITIAL_ANNUAL_BUDGET,
+      },
+      nextSettings.departmentName,
+      undefined,
+      nextSettings.authorName
+    );
     const emptyLayouts: ReceiptBookLayoutsMap = {};
     localStorage.setItem(
       STORAGE_KEYS.TRANSACTIONS,

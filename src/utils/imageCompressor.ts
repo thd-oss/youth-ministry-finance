@@ -75,14 +75,25 @@ function computeAdaptiveDimensions(
   };
 }
 
+const MIN_VALID_JPEG_DATA_URL_LENGTH = 128;
+const CANVAS_OOM_RETRY_SCALE = 0.65;
+
+function isValidJpegDataUrl(value: string): boolean {
+  return (
+    value.startsWith('data:image/jpeg;base64,') &&
+    value.length >= MIN_VALID_JPEG_DATA_URL_LENGTH
+  );
+}
+
 /**
  * 목표 용량(KB) 이내로 들어올 때까지 해상도는 유지한 채 JPEG 품질만 단계적으로 조절합니다.
+ * iOS PWA Canvas 메모리 초과로 빈 문자열("data:,")이 반환되는 경우를 엄격히 차단합니다.
  */
 function encodeAdaptiveJpeg(
   canvas: HTMLCanvasElement,
   isLongReceipt: boolean,
   requestedQuality: number
-): { dataUrl: string; sizeKb: number } {
+): { dataUrl: string; sizeKb: number } | null {
   const targetMaxKb = isLongReceipt ? LONG_TARGET_MAX_KB : NORMAL_TARGET_MAX_KB;
   const candidateSteps = isLongReceipt
     ? LONG_QUALITY_STEPS.map((step) => Math.min(requestedQuality, step))
@@ -97,6 +108,9 @@ function encodeAdaptiveJpeg(
 
   for (const q of uniqueSteps) {
     const encoded = canvas.toDataURL('image/jpeg', q);
+    if (!isValidJpegDataUrl(encoded)) {
+      continue;
+    }
     const sizeKb = estimateDataUrlSizeKb(encoded);
     bestDataUrl = encoded;
     bestSizeKb = sizeKb;
@@ -105,11 +119,54 @@ function encodeAdaptiveJpeg(
     }
   }
 
+  if (!bestDataUrl) {
+    return null;
+  }
+
   return { dataUrl: bestDataUrl, sizeKb: bestSizeKb };
+}
+
+function drawAndEncodeToJpeg(
+  img: HTMLImageElement,
+  targetWidth: number,
+  targetHeight: number,
+  isLongReceipt: boolean,
+  quality: number
+): { dataUrl: string; sizeKb: number; width: number; height: number } | null {
+  const safeW = Math.max(1, Math.round(targetWidth));
+  const safeH = Math.max(1, Math.round(targetHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = safeW;
+  canvas.height = safeH;
+
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // 투명 PNG 등의 배경이 검게 변하지 않도록 순백색(#FFFFFF) 배경 칠하기
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, safeW, safeH);
+    ctx.drawImage(img, 0, 0, safeW, safeH);
+
+    const encoded = encodeAdaptiveJpeg(canvas, isLongReceipt, quality);
+    if (!encoded) return null;
+
+    return {
+      dataUrl: encoded.dataUrl,
+      sizeKb: encoded.sizeKb,
+      width: safeW,
+      height: safeH,
+    };
+  } finally {
+    // 대용량 Canvas GPU 버퍼 즉시 해제
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 /**
  * 클라이언트 단 Canvas API를 사용하여 영수증 이미지를 종횡비 적응형으로 리사이징·압축합니다.
+ * - FileReader 대신 URL.createObjectURL 스트리밍 로드(iOS PWA 메모리 피크 방지)
  * - 일반 영수증(세로/가로 <= 2.2): 최대 폭 1200px, 품질 0.80, 목표 350KB
  * - 긴 영수증(세로/가로 > 2.2): 최대 폭 1000px + 8MP/8000px 가드, 목표 650KB (품질 0.76 -> 0.68 -> 0.60)
  */
@@ -119,64 +176,89 @@ export function compressReceiptImage(
   quality = DEFAULT_NORMAL_QUALITY
 ): Promise<CompressedImageResult> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('이미지 파일을 읽는 중 오류가 발생했습니다.'));
-    reader.onload = (event) => {
-      const srcDataUrl = event.target?.result as string;
-      if (!srcDataUrl) {
-        reject(new Error('이미지 데이터가 비어 있습니다.'));
-        return;
+    const objectUrl = URL.createObjectURL(file);
+    let released = false;
+    const release = () => {
+      if (!released) {
+        released = true;
+        URL.revokeObjectURL(objectUrl);
       }
+    };
 
-      const img = new Image();
-      img.onerror = () => reject(new Error('이미지 디코딩에 실패했습니다.'));
-      img.onload = () => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onerror = () => {
+      release();
+      reject(
+        new Error(
+          '이미지 형식을 읽을 수 없습니다. 사진 보관함에서 JPG/PNG 사진으로 다시 선택해 주세요.'
+        )
+      );
+    };
+    img.onload = async () => {
+      try {
+        if (typeof img.decode === 'function') {
+          await img.decode().catch(() => undefined);
+        }
+
         const naturalWidth = img.naturalWidth || img.width;
         const naturalHeight = img.naturalHeight || img.height;
+        if (!naturalWidth || !naturalHeight) {
+          throw new Error('이미지 크기를 읽지 못했습니다.');
+        }
+
         const {
           width: targetWidth,
           height: targetHeight,
           isLongReceipt,
         } = computeAdaptiveDimensions(naturalWidth, naturalHeight, maxWidth);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas 2D 컨텍스트를 생성할 수 없습니다.'));
-          return;
-        }
-
-        // 투명 PNG 등의 배경이 검게 변하지 않도록 순백색(#FFFFFF) 배경 칠하기
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, targetWidth, targetHeight);
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
-        const { dataUrl: compressedDataUrl, sizeKb } = encodeAdaptiveJpeg(
-          canvas,
+        let result = drawAndEncodeToJpeg(
+          img,
+          targetWidth,
+          targetHeight,
           isLongReceipt,
           quality
         );
 
-        // 대용량 Canvas GPU 버퍼 즉시 해제
-        canvas.width = 0;
-        canvas.height = 0;
+        // iOS PWA 메모리 압박으로 1차 인코딩이 실패한 경우 축소 해상도로 1회 자동 재시도
+        if (!result) {
+          result = drawAndEncodeToJpeg(
+            img,
+            targetWidth * CANVAS_OOM_RETRY_SCALE,
+            targetHeight * CANVAS_OOM_RETRY_SCALE,
+            isLongReceipt,
+            Math.min(quality, 0.72)
+          );
+        }
+
+        if (!result) {
+          throw new Error(
+            '이미지가 너무 크거나 처리할 수 없는 형식입니다. 다시 시도해 주세요.'
+          );
+        }
 
         resolve({
-          dataUrl: compressedDataUrl,
+          dataUrl: result.dataUrl,
           meta: {
-            width: targetWidth,
-            height: targetHeight,
-            sizeKb,
+            width: result.width,
+            height: result.height,
+            sizeKb: result.sizeKb,
             fileName: file.name,
           },
         });
-      };
-      img.src = srcDataUrl;
+      } catch (err) {
+        reject(
+          err instanceof Error
+            ? err
+            : new Error('이미지 압축 중 오류가 발생했습니다.')
+        );
+      } finally {
+        release();
+      }
     };
-    reader.readAsDataURL(file);
+
+    img.src = objectUrl;
   });
 }
 

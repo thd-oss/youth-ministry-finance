@@ -5,8 +5,10 @@ import {
   ArrowRight,
   GripHorizontal,
   Layers,
+  Loader2,
   Move,
   Plus,
+  RefreshCw,
   RotateCcw,
   Scissors,
   Sparkles,
@@ -14,6 +16,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { useResolvedReceiptSrc } from '../hooks/useResolvedReceiptSrc';
 import {
   ProcessedTransaction,
   ReceiptDensity,
@@ -156,6 +159,13 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
   const lastCanvasTapRef = useRef<{ time: number; y: number } | null>(null);
 
   const [mobileTab, setMobileTab] = useState<'cut' | 'place'>(initialTab);
+  const {
+    resolvedSrc: resolvedReceiptSrc,
+    isLoading: isReceiptImgLoading,
+    hasError: hasReceiptImgError,
+    handleImgError: handleReceiptImgError,
+    retry: retryReceiptImg,
+  } = useResolvedReceiptSrc(transaction?.receiptImage);
   const [loadedDim, setLoadedDim] = useState<{ width: number; height: number } | null>(null);
   const [segments, setSegments] = useState<ReceiptSegment[]>([
     { id: 's1', yStart: 0, yEnd: 1 },
@@ -956,13 +966,38 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                   onPointerUp={handleCanvasPointerUp}
                   className="relative w-full max-w-[360px] mx-auto select-none rounded-2xl overflow-hidden bg-[#FFFFFF] border border-[#E5E8EB]"
                 >
-                  <img
-                    src={transaction.receiptImage}
-                    alt="분할 대상 영수증"
-                    draggable={false}
-                    onLoad={handleOriginImageLoad}
-                    className="w-full h-auto block pointer-events-none"
-                  />
+                  {isReceiptImgLoading && !resolvedReceiptSrc ? (
+                    <div className="w-full min-h-[260px] flex flex-col items-center justify-center gap-2 text-[#8B95A1]">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#3182F6]" />
+                      <span className="text-[12.5px] font-medium">
+                        영수증 원본 불러오는 중...
+                      </span>
+                    </div>
+                  ) : hasReceiptImgError || !resolvedReceiptSrc ? (
+                    <div className="w-full min-h-[260px] flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+                      <span className="text-[13px] font-semibold text-[#4E5968]">
+                        영수증 원본을 불러오지 못했습니다
+                      </span>
+                      <button
+                        type="button"
+                        onClick={retryReceiptImg}
+                        className="h-9 px-3.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold inline-flex items-center gap-1.5 active:scale-[0.97]"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>다시 불러오기</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <img
+                      src={resolvedReceiptSrc}
+                      alt="분할 대상 영수증"
+                      referrerPolicy="no-referrer"
+                      draggable={false}
+                      onLoad={handleOriginImageLoad}
+                      onError={handleReceiptImgError}
+                      className="w-full h-auto block pointer-events-none"
+                    />
+                  )}
 
                   {/* 각 조각 구간 번호 배지(① ② ③) */}
                   {segments.map((seg, idx) => (
@@ -1226,7 +1261,10 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                                       className="w-full h-full block"
                                     >
                                       <image
-                                        href={transaction.receiptImage}
+                                        href={
+                                          resolvedReceiptSrc ||
+                                          transaction.receiptImage
+                                        }
                                         x={0}
                                         y={0}
                                         width={SVG_BASE_WIDTH}

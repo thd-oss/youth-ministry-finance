@@ -27,6 +27,7 @@ import {
   sanitizeReceiptLayoutsMap,
   sanitizeReceiptMetadata,
 } from './syncManager';
+import { primeDriveImageCache } from './driveImageCache';
 
 // 빌드 시 환경변수(VITE_GOOGLE_CLIENT_ID)로 기본 클라이언트 ID를 내장할 수 있습니다.
 export const BUILTIN_GOOGLE_CLIENT_ID: string =
@@ -785,6 +786,11 @@ async function uploadReceiptImageToDrive(
 
   const uploaded = await uploadRes.json();
   const fileId = uploaded.id;
+
+  // 업로드 직후 방금 만든 원본 Blob을 동일 출처 캐시에 즉시 워밍업 (iOS PWA 동기화 직후 엑박·깜빡임 방지)
+  if (fileId && blob.size > 0) {
+    primeDriveImageCache(fileId, blob);
+  }
 
   // 링크가 있는 사용자 읽기 권한 설정 (다른 기기·시트에서도 썸네일 즉시 표시)
   try {

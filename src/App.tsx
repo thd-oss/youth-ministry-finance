@@ -46,11 +46,13 @@ import {
   trySilentGoogleReconnect,
 } from './utils/googleDirectSync';
 import { formatYearMonthKorean } from './utils/koreanCurrency';
+import { notifyReceiptAuthChanged } from './utils/receiptImageLoader';
 import {
   BudgetsMap,
   computeMonthlyLedger,
   deriveDynamicFiscalSchema,
   enrichAllTransactionsWithEvidence,
+  syncBudgetsWithDepartment,
   SyncManager,
 } from './utils/syncManager';
 import { BudgetBuilderView } from './components/BudgetBuilderView';
@@ -135,6 +137,9 @@ export const App: React.FC = () => {
   const [budgets, setBudgets] = useState<BudgetsMap>(() =>
     SyncManager.loadBudgets()
   );
+  const budgetsRef = useRef<BudgetsMap>(budgets);
+  budgetsRef.current = budgets;
+  const pendingDeptHealSyncRef = useRef<boolean>(false);
   const [mokjangs, setMokjangs] = useState<MokjangGroup[]>(() =>
     SyncManager.loadMokjangs()
   );
@@ -396,8 +401,26 @@ export const App: React.FC = () => {
   };
 
   const handleUpdateSettings = (nextSettings: AppSettings) => {
+    const prevSettings = settingsRef.current;
     setSettings(nextSettings);
+    settingsRef.current = nextSettings;
     SyncManager.saveSettings(nextSettings);
+
+    // 전역 기본 정보(부서명·작성자)를 연간예산안·수련회청구서 문서에 단일 기준(SSOT)으로 전파
+    const { budgets: syncedBudgets, changed: budgetsChanged } =
+      syncBudgetsWithDepartment(
+        budgetsRef.current,
+        nextSettings.departmentName,
+        prevSettings.departmentName,
+        nextSettings.authorName,
+        prevSettings.authorName
+      );
+    if (budgetsChanged) {
+      setBudgets(syncedBudgets);
+      budgetsRef.current = syncedBudgets;
+      SyncManager.saveBudgets(syncedBudgets);
+    }
+
     bumpDataRevision();
     if (googleSession && nextSettings.googleSpreadsheetId) {
       setSyncStatus('synced');
@@ -443,12 +466,20 @@ export const App: React.FC = () => {
           spreadsheetId,
           baseSettings
         );
+        const { budgets: normalizedBudgets, changed: deptHealed } =
+          syncBudgetsWithDepartment(
+            pulled.budgets,
+            pulled.settings.departmentName,
+            undefined,
+            pulled.settings.authorName
+          );
         setTransactions(pulled.transactions);
         const savedTx = SyncManager.saveTransactions(pulled.transactions);
         setMokjangs(pulled.mokjangs);
         SyncManager.saveMokjangs(pulled.mokjangs);
-        setBudgets(pulled.budgets);
-        SyncManager.saveBudgets(pulled.budgets);
+        setBudgets(normalizedBudgets);
+        budgetsRef.current = normalizedBudgets;
+        SyncManager.saveBudgets(normalizedBudgets);
         setSettings(pulled.settings);
         settingsRef.current = pulled.settings;
         SyncManager.saveSettings(pulled.settings);
@@ -458,13 +489,17 @@ export const App: React.FC = () => {
           pulled.receiptLayouts
         );
         setStorageQuotaWarning(!savedTx || !savedLayouts);
-        lastSyncedRevisionRef.current = dataRevisionRef.current;
+        if (deptHealed) {
+          bumpDataRevision();
+        } else {
+          lastSyncedRevisionRef.current = dataRevisionRef.current;
+        }
         setSyncStatus('synced');
         return {
           transactionCount: pulled.transactions.length,
           mokjangCount: pulled.mokjangs.length,
-          annualBudgetCount: pulled.budgets.annual_budget.items.length,
-          retreatBudgetCount: pulled.budgets.retreat_claim.items.length,
+          annualBudgetCount: normalizedBudgets.annual_budget.items.length,
+          retreatBudgetCount: normalizedBudgets.retreat_claim.items.length,
           remoteModifiedTime: pulled.remoteModifiedTime,
         };
       } catch (err) {
@@ -476,7 +511,7 @@ export const App: React.FC = () => {
         isPullingGoogleRef.current = false;
       }
     },
-    []
+    [bumpDataRevision]
   );
 
   /**
@@ -587,6 +622,10 @@ export const App: React.FC = () => {
 
     if (isSameCloudVersion && !hasLocalUnsavedEdits) {
       setSyncStatus('synced');
+      if (pendingDeptHealSyncRef.current) {
+        pendingDeptHealSyncRef.current = false;
+        bumpDataRevision();
+      }
       return {
         session,
         workspace,
@@ -805,6 +844,34 @@ export const App: React.FC = () => {
     }
     setSyncStatus(settings.gasWebAppUrl.trim() ? 'synced' : 'local');
   };
+
+  // Google 로그인 토큰 확보 시 마운트된 모든 영수증 이미지가 인증 Drive API로 즉시 재해석되도록 알림
+  useEffect(() => {
+    if (googleSession?.accessToken) {
+      notifyReceiptAuthChanged();
+    }
+  }, [googleSession?.accessToken]);
+
+  // 최초 로드 시 이미 변경된 부서명(settings.departmentName)과 불일치하는 구 샘플 부서명 예산 문서 자동 보정
+  useEffect(() => {
+    const { budgets: healedBudgets, changed } = syncBudgetsWithDepartment(
+      budgetsRef.current,
+      settingsRef.current.departmentName,
+      undefined,
+      settingsRef.current.authorName
+    );
+    if (changed) {
+      setBudgets(healedBudgets);
+      budgetsRef.current = healedBudgets;
+      SyncManager.saveBudgets(healedBudgets);
+      // 이미 로그인 세션이 살아 있는 경우에만 즉시 클라우드 반영(미로그인 시 재연결 직후 자동 반영)
+      if (loadGoogleSession()) {
+        bumpDataRevision();
+      } else {
+        pendingDeptHealSyncRef.current = true;
+      }
+    }
+  }, [bumpDataRevision]);
 
   // 1) 최초 마운트: URL ?gclient=... 자동 등록 + 이전 계정 무팝업 자동 재연결
   useEffect(() => {
@@ -1235,19 +1302,19 @@ export const App: React.FC = () => {
               href={settings.googleSpreadsheetUrl}
               target="_blank"
               rel="noreferrer"
-              className="h-8 px-2.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all"
+              className="h-7 sm:h-8 px-2 sm:px-2.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[11.5px] sm:text-[12px] font-semibold flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 transition-all"
             >
               <span className="w-2 h-2 rounded-full bg-[#00C471] shrink-0" />
               <span className="sm:hidden">시트</span>
               <span className="hidden sm:inline">내 드라이브 시트</span>
-              <ExternalLink className="w-3 h-3 text-[#8B95A1] shrink-0" />
+              <ExternalLink className="hidden sm:block w-3 h-3 text-[#8B95A1] shrink-0" />
             </a>
             <button
               type="button"
               onClick={() => void handleHeaderManualRefresh()}
               aria-label="구글 드라이브 최신화"
               title="구글 드라이브 최신 데이터 불러오기"
-              className="w-8 h-8 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] flex items-center justify-center shrink-0 active:scale-[0.97] transition-all duration-150"
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] flex items-center justify-center shrink-0 active:scale-[0.97] transition-all duration-150"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -1258,7 +1325,7 @@ export const App: React.FC = () => {
         <button
           type="button"
           onClick={() => void handleHeaderQuickSignIn()}
-          className="h-8 px-2.5 rounded-full bg-[#FFF8E6] hover:bg-[#FEF0C7] text-[#B45309] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
+          className="h-7 sm:h-8 px-2 sm:px-2.5 rounded-full bg-[#FFF8E6] hover:bg-[#FEF0C7] text-[#B45309] text-[11.5px] sm:text-[12px] font-semibold flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
         >
           <span className="w-2 h-2 rounded-full bg-[#F59E0B] shrink-0" />
           <span>다시 연결</span>
@@ -1308,26 +1375,26 @@ export const App: React.FC = () => {
           상단 글로벌 헤더 & 4대 뷰 네비게이션 (@media print 시 완벽 숨김)
          =================================================================== */}
       <header className="no-print sticky top-0 z-30 bg-[#FFFFFF]/95 backdrop-blur-md safe-area-top">
-        <div className="max-w-[980px] mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2">
+        <div className="max-w-[980px] mx-auto px-2.5 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-1 sm:gap-2">
           {/* 좌측: 브랜드 & 귀속 연월 선택기 */}
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
             <div className="hidden sm:flex w-9 h-9 rounded-2xl bg-[#3182F6] text-[#FFFFFF] items-center justify-center font-bold text-[15px] shrink-0">
               청
             </div>
 
-            <div className="flex items-center bg-[#F9FAFB] rounded-full px-1 py-0.5 sm:px-1.5 sm:py-1 shrink-0">
+            <div className="flex items-center bg-[#F9FAFB] rounded-full px-0.5 py-0.5 sm:px-1.5 sm:py-1 shrink-0">
               <button
                 type="button"
                 onClick={() => stepMonth(-1)}
                 aria-label="이전 달"
-                className="w-8 h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <div className="relative flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-full focus-within:ring-2 focus-within:ring-[#3182F6]/30">
-                <Calendar className="w-3.5 h-3.5 text-[#3182F6] shrink-0 pointer-events-none" />
-                <span className="text-[13.5px] sm:text-[15px] font-bold text-[#191F28] tabular-nums whitespace-nowrap pointer-events-none">
+              <div className="relative flex items-center gap-0.5 sm:gap-1 px-1 sm:px-2 py-1 rounded-full focus-within:ring-2 focus-within:ring-[#3182F6]/30">
+                <Calendar className="hidden sm:block w-3.5 h-3.5 text-[#3182F6] shrink-0 pointer-events-none" />
+                <span className="text-[13px] sm:text-[15px] font-bold text-[#191F28] tabular-nums whitespace-nowrap pointer-events-none">
                   {formatYearMonthKorean(yearMonth)}
                 </span>
                 <ChevronDown
@@ -1354,7 +1421,7 @@ export const App: React.FC = () => {
                 type="button"
                 onClick={() => stepMonth(1)}
                 aria-label="다음 달"
-                className="w-8 h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -1362,11 +1429,11 @@ export const App: React.FC = () => {
           </div>
 
           {/* 우측: Gemini AI 배지 + 구글 시트 배지 + 연동 설정 */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => openSettingsAt('gemini')}
-              className={`h-8 px-2.5 rounded-full text-[12px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ${
+              className={`h-7 sm:h-8 px-2 sm:px-2.5 rounded-full text-[11.5px] sm:text-[12px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ${
                 hasGeminiKey
                   ? 'bg-[#E8F3FF] text-[#1B64DA]'
                   : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
@@ -1385,7 +1452,7 @@ export const App: React.FC = () => {
               type="button"
               onClick={() => openSettingsAt('connection')}
               aria-label="설정"
-              className="w-8 h-8 sm:w-auto sm:px-3 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center justify-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ease-out"
+              className="w-7 h-7 sm:w-auto sm:h-8 sm:px-3 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center justify-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ease-out"
             >
               <Settings className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden sm:inline">설정</span>

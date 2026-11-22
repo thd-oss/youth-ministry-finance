@@ -37,6 +37,7 @@ import { analyzeReceiptWithGemini } from '../utils/receiptAiAnalyzer';
 import { CategoryBudgetAllocation } from '../utils/syncManager';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 import { TdsDialog } from './TdsDialog';
+import { ReceiptImg } from './ReceiptImg';
 
 /** 2행2열(4-up) 기준 긴 영수증 판정 종횡비(높이 / 너비) 임계값 */
 const LONG_RECEIPT_ASPECT_THRESHOLD = 1.55;
@@ -588,9 +589,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             {receiptImage ? (
               <div className="space-y-3">
                 <div className="relative rounded-2xl bg-[#FFFFFF] p-3 flex flex-col items-center">
-                  <img
+                  <ReceiptImg
                     src={receiptImage}
                     alt="영수증 미리보기"
+                    fallbackHeightClass="min-h-[160px]"
                     onLoad={(e) => {
                       const img = e.currentTarget;
                       if (

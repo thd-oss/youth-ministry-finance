@@ -3,12 +3,12 @@ import {
   ReceiptSegment,
   SlotSegmentPlacement,
 } from '../types/finance';
-import {
-  extractDriveFileId,
-  fetchDriveFileBlob,
-  loadGoogleSession,
-} from './googleDirectSync';
+import { extractDriveFileId } from './googleDirectSync';
 import { RECEIPT_SLOT_GEOMETRY } from './receiptGeometry';
+import {
+  getDriveBlobObjectUrl,
+  invalidateDriveImageCache,
+} from './receiptImageLoader';
 
 /** iOS Safari Canvas 한계(16.7MP) 대비 안전 픽셀 면적·높이 상한 */
 const MAX_CANVAS_PIXELS = 8_000_000;
@@ -104,7 +104,6 @@ interface CachedSliceEntry {
 }
 
 const blobUrlCache = new Map<string, CachedSliceEntry>();
-const driveObjectUrlCache = new Map<string, string>();
 const inFlightTasks = new Map<string, Promise<unknown>>();
 
 let scratchCanvas: HTMLCanvasElement | null = null;
@@ -221,28 +220,23 @@ async function loadCanvasSafeImage(src: string): Promise<HTMLImageElement> {
     return loadHtmlImage(src);
   }
 
-  // Google Drive URL인 경우 OAuth 활성 시 Drive API alt=media로 무손실 Blob 로드 (CORS 0%)
+  // Google Drive URL인 경우 공용 Drive Blob 캐시(OAuth alt=media)로 무손실 로드 (CORS 0%)
   const driveFileId = extractDriveFileId(src);
   if (driveFileId) {
-    const cachedBlobUrl = driveObjectUrlCache.get(driveFileId);
-    if (cachedBlobUrl) {
+    const blobUrl = await getDriveBlobObjectUrl(driveFileId);
+    if (blobUrl) {
       try {
-        return await loadHtmlImage(cachedBlobUrl);
+        return await loadHtmlImage(blobUrl);
       } catch {
-        URL.revokeObjectURL(cachedBlobUrl);
-        driveObjectUrlCache.delete(driveFileId);
-      }
-    }
-
-    const session = loadGoogleSession();
-    if (session?.accessToken) {
-      try {
-        const blob = await fetchDriveFileBlob(driveFileId, session.accessToken);
-        const objectUrl = URL.createObjectURL(blob);
-        driveObjectUrlCache.set(driveFileId, objectUrl);
-        return await loadHtmlImage(objectUrl);
-      } catch {
-        // 토큰 만료·권한 오류 시 아래 anonymous CORS 시도로 폴백
+        invalidateDriveImageCache(driveFileId);
+        const refreshedUrl = await getDriveBlobObjectUrl(driveFileId, true);
+        if (refreshedUrl) {
+          try {
+            return await loadHtmlImage(refreshedUrl);
+          } catch {
+            // 아래 anonymous CORS 폴백으로 진행
+          }
+        }
       }
     }
   }
@@ -660,18 +654,14 @@ export function revokeUnusedSliceUrls(
 }
 
 /**
- * 캐시된 모든 슬라이스 및 Drive 임시 Blob URL을 일괄 해제합니다 (언마운트 정리용).
+ * 캐시된 모든 슬라이스 Blob URL을 일괄 해제합니다 (언마운트 정리용).
+ * 공용 Drive 원본 Blob 캐시는 탭 전환 시 재다운로드를 막기 위해 세션 동안 유지됩니다.
  */
 export function revokeAllSliceUrls(): void {
   for (const entry of blobUrlCache.values()) {
     URL.revokeObjectURL(entry.url);
   }
   blobUrlCache.clear();
-
-  for (const url of driveObjectUrlCache.values()) {
-    URL.revokeObjectURL(url);
-  }
-  driveObjectUrlCache.clear();
 }
 
 function waitAnimationFrames(count: number): Promise<void> {
