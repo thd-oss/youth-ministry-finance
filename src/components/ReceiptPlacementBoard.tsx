@@ -309,14 +309,14 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
       : 'aspect-[844/945] max-h-[210px]';
 
   return (
-    <div className="no-print max-w-[980px] mx-auto space-y-4">
+    <div className="no-print max-w-[980px] mx-auto space-y-4 pb-24 sm:pb-10">
       {/* 상단 툴바 */}
       <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-9 h-9 rounded-2xl bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center shrink-0">
             <LayoutGrid className="w-4 h-4" />
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-[14.5px] font-bold text-[#191F28] tabular-nums">
               영수증철 {pages.length}장 · 배치 {totalFilledSlots}칸
             </div>
@@ -326,16 +326,16 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={() => {
               setSelectedCoord(null);
               onCompact();
             }}
-            className="h-9 px-3.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all"
+            className="flex-1 sm:flex-none h-9 px-3.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
           >
-            <Minimize2 className="w-3.5 h-3.5" />
+            <Minimize2 className="w-3.5 h-3.5 shrink-0" />
             <span>자동 채우기</span>
           </button>
 
@@ -345,9 +345,9 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
               setSelectedCoord(null);
               onResetOrder();
             }}
-            className="h-9 px-3.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all"
+            className="flex-1 sm:flex-none h-9 px-3.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
             <span>기본 순서로</span>
           </button>
         </div>
@@ -361,7 +361,7 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
           return (
             <section
               key={page.pageId}
-              className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-5 space-y-3"
+              className="bg-[#FFFFFF] rounded-3xl p-3.5 sm:p-5 space-y-3"
             >
               {/* 페이지 헤더 */}
               <div className="flex items-center justify-between gap-2">
@@ -460,7 +460,7 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                       onDrop={(e) => handleDrop(e, pageIdx, slotIdx)}
                       onDragEnd={handleDragEnd}
                       onClick={() => handleSlotTap(pageIdx, slotIdx)}
-                      className={`relative rounded-2xl border bg-[#FFFFFF] p-2.5 sm:p-3 flex flex-col justify-between gap-2 cursor-pointer select-none transition-all ${
+                      className={`relative rounded-2xl border bg-[#FFFFFF] p-2.5 sm:p-3 flex flex-col justify-between gap-2 overflow-hidden min-w-0 cursor-pointer select-none transition-all ${
                         isOverflowSlot ? 'border-l-4 border-l-[#3182F6]' : ''
                       } ${
                         isSelected
@@ -481,24 +481,24 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                         </div>
                       )}
 
-                      {/* 슬롯 상단 헤더 */}
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <div className="flex items-center gap-1 min-w-0">
+                      {/* 슬롯 상단 헤더 (< sm 2단 분리로 137px 셀 오버플로우 원천 차단) */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-1 min-w-0">
                           <GripVertical className="w-3.5 h-3.5 text-[#8B95A1] shrink-0 hidden sm:block cursor-grab" />
-                          <span className="px-1.5 py-0.5 rounded-md bg-[#191F28] text-[#FFFFFF] text-[11px] font-bold tabular-nums shrink-0">
+                          <span className="px-1.5 py-0.5 rounded-md bg-[#191F28] text-[#FFFFFF] text-[10.5px] sm:text-[11px] font-bold tabular-nums shrink-0 whitespace-nowrap">
                             {tx.evidenceNo || '#'}
                             {isOverflowSlot && meta
                               ? ` (${meta.slotIndexOfTx + 1}/${meta.slotTotalOfTx})`
                               : ''}
                           </span>
                           {isSegmentGroup && (
-                            <span className="px-1.5 py-0.5 rounded-md bg-[#E8F3FF] text-[#1B64DA] text-[10.5px] font-bold tabular-nums shrink-0">
+                            <span className="px-1.5 py-0.5 rounded-md bg-[#E8F3FF] text-[#1B64DA] text-[10px] sm:text-[10.5px] font-bold tabular-nums shrink-0 whitespace-nowrap">
                               {pieceCount}조각
                             </span>
                           )}
                         </div>
 
-                        <span className="text-[11px] font-bold text-[#4E5968] tabular-nums shrink-0">
+                        <span className="text-[11px] font-bold text-[#4E5968] tabular-nums truncate sm:shrink-0">
                           {isOverflowSlot && meta && meta.slotIndexOfTx > 0
                             ? '(이어짐)'
                             : formatWon(tx.amount)}
@@ -527,29 +527,14 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                             })
                           )
                         ) : tx.receiptImage ? (
-                          <>
-                            <img
-                              src={tx.receiptImage}
-                              alt={`증빙 ${tx.evidenceNo}`}
-                              draggable={false}
-                              className={`w-full h-full object-contain block pointer-events-none ${
-                                scanFilter ? 'receipt-scan-filter' : ''
-                              }`}
-                            />
-                            {longFlag && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenSplitEditor(tx, 'cut');
-                                }}
-                                className="absolute top-1.5 right-1.5 px-2 py-1 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[10.5px] font-bold flex items-center gap-1 active:scale-[0.96] shadow-xs"
-                              >
-                                <Scissors className="w-3 h-3" />
-                                <span>긴 영수증 · 분할</span>
-                              </button>
-                            )}
-                          </>
+                          <img
+                            src={tx.receiptImage}
+                            alt={`증빙 ${tx.evidenceNo}`}
+                            draggable={false}
+                            className={`w-full h-full object-contain block pointer-events-none ${
+                              scanFilter ? 'receipt-scan-filter' : ''
+                            }`}
+                          />
                         ) : (
                           <div className="flex flex-col items-center justify-center text-center text-[#8B95A1] gap-1 py-4">
                             <ImageIcon className="w-5 h-5" />
@@ -560,9 +545,9 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                         )}
                       </div>
 
-                      {/* 슬롯 하단 적요 + 편집 버튼 */}
-                      <div className="flex items-center justify-between gap-1.5 min-w-0 pt-0.5">
-                        <span className="text-[12px] font-semibold text-[#191F28] truncate">
+                      {/* 슬롯 하단 적요 + 단일화된 분할/배치 수정 버튼 (< sm 풀폭 h-8) */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 min-w-0 pt-0.5">
+                        <span className="text-[12px] font-semibold text-[#191F28] truncate w-full sm:w-auto sm:flex-1">
                           {tx.title}
                         </span>
 
@@ -576,20 +561,25 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
                                 isSegmentGroup ? 'place' : 'cut'
                               );
                             }}
-                            className={`px-2 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1 active:scale-[0.96] transition-all ${
-                              isSegmentGroup
+                            className={`w-full sm:w-auto h-8 sm:h-7 px-2.5 sm:px-2 rounded-lg text-[11.5px] sm:text-[11px] font-bold shrink-0 flex items-center justify-center gap-1 whitespace-nowrap active:scale-[0.96] transition-all ${
+                              isSegmentGroup || longFlag
                                 ? 'bg-[#E8F3FF] text-[#1B64DA]'
                                 : 'bg-[#F2F4F6] text-[#4E5968]'
                             }`}
                           >
                             {isSegmentGroup ? (
                               <>
-                                <SlidersHorizontal className="w-3 h-3" />
+                                <SlidersHorizontal className="w-3 h-3 shrink-0" />
                                 <span>배치 수정</span>
+                              </>
+                            ) : longFlag ? (
+                              <>
+                                <Scissors className="w-3 h-3 shrink-0" />
+                                <span>긴 영수증 분할</span>
                               </>
                             ) : (
                               <>
-                                <Scissors className="w-3 h-3" />
+                                <Scissors className="w-3 h-3 shrink-0" />
                                 <span>분할</span>
                               </>
                             )}
@@ -617,12 +607,12 @@ export const ReceiptPlacementBoard: React.FC<ReceiptPlacementBoardProps> = ({
 
       {/* 슬롯 선택 시 하단 고정 액션바 (모바일·데스크톱 공용 탭-투-스왑/이동) */}
       {validSelectedCoord && selectedSlot && (
-        <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
+        <div className="sticky sticky-bottom-safe z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-lg">
           <div className="text-[12.5px] font-bold tabular-nums min-w-0 truncate">
             {selectedLabel} 선택됨 · 옮길 칸을 누르세요
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-1.5 shrink-0">
             <button
               type="button"
               disabled={!canStepPrev}

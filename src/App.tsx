@@ -4,6 +4,7 @@ import {
   BookOpen,
   Calculator,
   Calendar,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Cloud,
@@ -1219,32 +1220,34 @@ export const App: React.FC = () => {
   const renderSyncBadge = () => {
     if (syncStatus === 'syncing') {
       return (
-        <span className="px-2.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1.5">
+        <span className="h-8 px-2.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0">
           <span className="w-2 h-2 rounded-full bg-[#3182F6] animate-pulse shrink-0" />
-          <span>동기화 중</span>
+          <span className="sm:hidden">동기화</span>
+          <span className="hidden sm:inline">동기화 중</span>
         </span>
       );
     }
     if (settings.googleSpreadsheetUrl) {
       if (googleSession) {
         return (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             <a
               href={settings.googleSpreadsheetUrl}
               target="_blank"
               rel="noreferrer"
-              className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5 transition-all"
+              className="h-8 px-2.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all"
             >
               <span className="w-2 h-2 rounded-full bg-[#00C471] shrink-0" />
-              <span>내 드라이브 시트</span>
-              <ExternalLink className="w-3 h-3 text-[#8B95A1]" />
+              <span className="sm:hidden">시트</span>
+              <span className="hidden sm:inline">내 드라이브 시트</span>
+              <ExternalLink className="w-3 h-3 text-[#8B95A1] shrink-0" />
             </a>
             <button
               type="button"
               onClick={() => void handleHeaderManualRefresh()}
               aria-label="구글 드라이브 최신화"
               title="구글 드라이브 최신 데이터 불러오기"
-              className="w-7 h-7 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] flex items-center justify-center active:scale-[0.97] transition-all duration-150"
+              className="w-8 h-8 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] flex items-center justify-center shrink-0 active:scale-[0.97] transition-all duration-150"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -1255,7 +1258,7 @@ export const App: React.FC = () => {
         <button
           type="button"
           onClick={() => void handleHeaderQuickSignIn()}
-          className="px-2.5 py-1.5 rounded-full bg-[#FFF8E6] hover:bg-[#FEF0C7] text-[#B45309] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+          className="h-8 px-2.5 rounded-full bg-[#FFF8E6] hover:bg-[#FEF0C7] text-[#B45309] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
         >
           <span className="w-2 h-2 rounded-full bg-[#F59E0B] shrink-0" />
           <span>다시 연결</span>
@@ -1264,9 +1267,10 @@ export const App: React.FC = () => {
     }
     if (syncStatus === 'synced' && settings.gasWebAppUrl.trim()) {
       return (
-        <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5">
+        <span className="h-8 px-2.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0">
           <span className="w-2 h-2 rounded-full bg-[#00C471] shrink-0" />
-          <span>시트 연동</span>
+          <span className="sm:hidden">연동</span>
+          <span className="hidden sm:inline">시트 연동</span>
         </span>
       );
     }
@@ -1275,10 +1279,11 @@ export const App: React.FC = () => {
         <button
           type="button"
           onClick={() => void handleHeaderQuickSignIn()}
-          className="px-2.5 py-1.5 rounded-full bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+          className="h-8 px-2.5 rounded-full bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
         >
-          <LogIn className="w-3.5 h-3.5" />
-          <span>Google 로그인</span>
+          <LogIn className="w-3.5 h-3.5 shrink-0" />
+          <span className="sm:hidden">로그인</span>
+          <span className="hidden sm:inline">Google 로그인</span>
         </button>
       );
     }
@@ -1286,10 +1291,11 @@ export const App: React.FC = () => {
       <button
         type="button"
         onClick={() => openSettingsAt('connection')}
-        className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+        className="h-8 px-2.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
       >
-        <Cloud className="w-3.5 h-3.5 text-[#3182F6]" />
-        <span>드라이브 연결</span>
+        <Cloud className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
+        <span className="sm:hidden">드라이브</span>
+        <span className="hidden sm:inline">드라이브 연결</span>
       </button>
     );
   };
@@ -1301,31 +1307,38 @@ export const App: React.FC = () => {
       {/* ===================================================================
           상단 글로벌 헤더 & 4대 뷰 네비게이션 (@media print 시 완벽 숨김)
          =================================================================== */}
-      <header className="no-print sticky top-0 z-30 bg-[#FFFFFF]/95 backdrop-blur-md">
-        <div className="max-w-[980px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+      <header className="no-print sticky top-0 z-30 bg-[#FFFFFF]/95 backdrop-blur-md safe-area-top">
+        <div className="max-w-[980px] mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2">
           {/* 좌측: 브랜드 & 귀속 연월 선택기 */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center font-bold text-[15px] shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="hidden sm:flex w-9 h-9 rounded-2xl bg-[#3182F6] text-[#FFFFFF] items-center justify-center font-bold text-[15px] shrink-0">
               청
             </div>
 
-            <div className="flex items-center bg-[#F9FAFB] rounded-full px-1.5 py-1">
+            <div className="flex items-center bg-[#F9FAFB] rounded-full px-1 py-0.5 sm:px-1.5 sm:py-1 shrink-0">
               <button
                 type="button"
                 onClick={() => stepMonth(-1)}
                 aria-label="이전 달"
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] active:scale-[0.97] transition-all duration-150"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <div className="relative flex items-center px-2">
-                <Calendar className="w-3.5 h-3.5 text-[#3182F6] mr-1.5 shrink-0" />
+              <div className="relative flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-full focus-within:ring-2 focus-within:ring-[#3182F6]/30">
+                <Calendar className="w-3.5 h-3.5 text-[#3182F6] shrink-0 pointer-events-none" />
+                <span className="text-[13.5px] sm:text-[15px] font-bold text-[#191F28] tabular-nums whitespace-nowrap pointer-events-none">
+                  {formatYearMonthKorean(yearMonth)}
+                </span>
+                <ChevronDown
+                  aria-hidden="true"
+                  className="w-3.5 h-3.5 text-[#4E5968] shrink-0 pointer-events-none"
+                />
                 <select
                   aria-label="귀속 연월 선택"
                   value={yearMonth}
                   onChange={(e) => setYearMonth(e.target.value)}
-                  className="appearance-none bg-transparent pr-4 text-[15px] font-bold text-[#191F28] tabular-nums cursor-pointer focus:outline-none"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 >
                   {Array.from(new Set([...AVAILABLE_MONTHS, yearMonth]))
                     .sort()
@@ -1335,35 +1348,35 @@ export const App: React.FC = () => {
                       </option>
                     ))}
                 </select>
-                <span className="pointer-events-none absolute right-1 text-[11px] text-[#4E5968]">
-                  ▾
-                </span>
               </div>
 
               <button
                 type="button"
                 onClick={() => stepMonth(1)}
                 aria-label="다음 달"
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] active:scale-[0.97] transition-all duration-150"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[#4E5968] hover:bg-[#E5E8EB] shrink-0 active:scale-[0.97] transition-all duration-150"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          {/* 우측: Gemini AI 배지 + 구글 시트 배지 + [⚙️ 연동 설정] */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* 우측: Gemini AI 배지 + 구글 시트 배지 + 연동 설정 */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => openSettingsAt('gemini')}
-              className={`px-2.5 py-1.5 rounded-full text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all duration-150 ${
+              className={`h-8 px-2.5 rounded-full text-[12px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ${
                 hasGeminiKey
                   ? 'bg-[#E8F3FF] text-[#1B64DA]'
                   : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
               }`}
             >
-              <Sparkles className="w-3.5 h-3.5 text-[#3182F6]" />
-              <span>{hasGeminiKey ? 'AI 스캔 ON' : 'AI 연결'}</span>
+              <Sparkles className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
+              <span className="sm:hidden">{hasGeminiKey ? 'AI ON' : 'AI'}</span>
+              <span className="hidden sm:inline">
+                {hasGeminiKey ? 'AI 스캔 ON' : 'AI 연결'}
+              </span>
             </button>
 
             {renderSyncBadge()}
@@ -1371,70 +1384,74 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => openSettingsAt('connection')}
-              className="px-3 py-1.5 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150 ease-out"
+              aria-label="설정"
+              className="w-8 h-8 sm:w-auto sm:px-3 rounded-full bg-[#E5E8EB] hover:bg-[#D1D6DB] text-[#191F28] text-[12.5px] font-semibold flex items-center justify-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150 ease-out"
             >
-              <Settings className="w-3.5 h-3.5" />
-              <span>설정</span>
+              <Settings className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">설정</span>
             </button>
           </div>
         </div>
 
-        {/* 4가지 뷰 모드 전환 네비게이션 탭 */}
-        <div className="max-w-[980px] mx-auto px-4 sm:px-6 pb-3">
+        {/* 4가지 뷰 모드 전환 네비게이션 탭 (모바일·데스크톱 공용 1줄 세그먼트) */}
+        <div className="max-w-[980px] mx-auto px-3 sm:px-6 pb-2.5 sm:pb-3">
           <nav
             aria-label="주요 화면 전환"
-            className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1"
+            className="bg-[#F2F4F6] p-1 rounded-2xl grid grid-cols-4 gap-1"
           >
             <button
               type="button"
               onClick={() => setActiveView('ledger')}
-              className={`py-2.5 px-2.5 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1 sm:px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap transition-all duration-150 ease-out active:scale-[0.97] ${
                 activeView === 'ledger'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
-              <BookOpen className="w-4 h-4 shrink-0" />
+              <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
               <span>장부</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveView('mokjang_share')}
-              className={`py-2.5 px-2.5 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1 sm:px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap transition-all duration-150 ease-out active:scale-[0.97] ${
                 activeView === 'mokjang_share'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
-              <Users className="w-4 h-4 shrink-0" />
-              <span>목장 현황</span>
+              <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden">목장</span>
+              <span className="hidden sm:inline">목장 현황</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveView('print_center')}
-              className={`py-2.5 px-2.5 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1 sm:px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap transition-all duration-150 ease-out active:scale-[0.97] ${
                 activeView === 'print_center'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
-              <Printer className="w-4 h-4 shrink-0" />
-              <span>결산·인쇄</span>
+              <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden">결산</span>
+              <span className="hidden sm:inline">결산·인쇄</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveView('budget_builder')}
-              className={`py-2.5 px-2.5 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 ease-out active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1 sm:px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap transition-all duration-150 ease-out active:scale-[0.97] ${
                 activeView === 'budget_builder'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
-              <Calculator className="w-4 h-4 shrink-0" />
-              <span>예산안·청구서</span>
+              <Calculator className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden">예산안</span>
+              <span className="hidden sm:inline">예산안·청구서</span>
             </button>
           </nav>
         </div>
@@ -1475,10 +1492,10 @@ export const App: React.FC = () => {
       {/* 로컬 스토리지 용량 부족 경고 배너 (@media print 시 숨김) */}
       {storageQuotaWarning && (
         <div className="no-print max-w-[980px] mx-auto px-4 sm:px-6 pt-3">
-          <div className="rounded-2xl bg-[#FFF8E6] px-4 py-2.5 flex items-center justify-between gap-3 text-[13px] font-semibold text-[#B45309]">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="rounded-2xl bg-[#FFF8E6] px-4 py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 text-[13px] font-semibold text-[#B45309]">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span className="truncate sm:whitespace-normal">
+              <span className="break-words [word-break:keep-all]">
                 브라우저 저장 공간이 부족합니다. 구글 시트 백업을 권장합니다.
               </span>
             </div>

@@ -10,7 +10,6 @@ import {
   Rocket,
   Search,
   Sparkles,
-  Users,
   X,
 } from 'lucide-react';
 import {
@@ -77,7 +76,6 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onSelectTransaction,
   onExportCsv,
   onSwitchToPrintCenter,
-  onSwitchToMokjangShare,
   onSwitchToBudgetBuilder,
   onOpenProductionSetup,
   onOpenGeminiSetup,
@@ -214,116 +212,105 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </div>
       )}
 
-      {/* 1. 통장 쪼개기 탭 필터 */}
-      <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 no-scrollbar">
-        <div className="flex items-center gap-2">
-          {accounts.map((acc) => {
-            const isActive = accountFilter === acc;
-            return (
-              <button
-                key={acc}
-                type="button"
-                onClick={() => onAccountFilterChange(acc)}
-                className={`px-4 py-2 rounded-full text-[14px] font-semibold shrink-0 transition-all duration-150 ease-out active:scale-[0.97] ${
-                  isActive
-                    ? 'bg-[#191F28] text-[#FFFFFF]'
-                    : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
-                }`}
-              >
-                {ACCOUNT_LABELS[acc]}
-              </button>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={onSwitchToMokjangShare}
-          className="px-3.5 py-2 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-bold shrink-0 flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
-        >
-          <Users className="w-3.5 h-3.5" />
-          목장 현황
-        </button>
+      {/* 1. 통장 쪼개기 탭 필터 (단일 레벨 가로 스크롤 · 겹침 방지) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+        {accounts.map((acc) => {
+          const isActive = accountFilter === acc;
+          return (
+            <button
+              key={acc}
+              type="button"
+              onClick={() => onAccountFilterChange(acc)}
+              className={`px-3.5 sm:px-4 py-2 rounded-full text-[13px] sm:text-[14px] font-semibold shrink-0 whitespace-nowrap transition-all duration-150 ease-out active:scale-[0.97] ${
+                isActive
+                  ? 'bg-[#191F28] text-[#FFFFFF]'
+                  : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
+              }`}
+            >
+              {ACCOUNT_LABELS[acc]}
+            </button>
+          );
+        })}
       </div>
 
       {/* 2. 메인 잔액 카드 (Hero Card) */}
-      <section className="bg-[#FFFFFF] rounded-3xl p-6">
+      <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[14px] font-semibold text-[#4E5968]">
+          <span className="text-[13.5px] sm:text-[14px] font-semibold text-[#4E5968]">
             {formatYearMonthKorean(yearMonth)} · {ACCOUNT_LABELS[accountFilter]}{' '}
             잔액
           </span>
           <button
             type="button"
             onClick={onSwitchToPrintCenter}
-            className="px-3 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+            className="px-3 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
           >
-            <Printer className="w-3.5 h-3.5" />
-            결산·인쇄
+            <Printer className="w-3.5 h-3.5 shrink-0" />
+            <span>결산·인쇄</span>
           </button>
         </div>
 
         {/* Hero Balance */}
-        <div className="mt-2 text-[30px] font-bold text-[#191F28] tabular-nums tracking-tight">
+        <div className="mt-2 text-[28px] sm:text-[30px] font-bold text-[#191F28] tabular-nums tracking-tight">
           {formatWon(currentBalance)}
         </div>
 
-        {/* 전월 이월금 / 이번 달 수입 / 이번 달 지출 요약 캡슐 */}
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
-            <div className="text-[12px] font-medium text-[#8B95A1]">
+        {/* 전월 이월금 / 이번 달 수입 / 이번 달 지출 요약 캡슐 (모바일 컴팩트 3열) */}
+        <div className="mt-4 sm:mt-5 grid grid-cols-3 gap-2 sm:gap-2.5">
+          <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3.5 min-w-0">
+            <div className="text-[11px] sm:text-[12px] font-medium text-[#8B95A1] truncate">
               전월 이월
             </div>
-            <div className="mt-1 text-[15px] font-semibold text-[#4E5968] tabular-nums">
+            <div className="mt-1 text-[12.5px] sm:text-[15px] font-semibold text-[#4E5968] tabular-nums tracking-tight whitespace-nowrap truncate">
               {formatWon(carryoverAmount)}
             </div>
           </div>
 
-          <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
-            <div className="text-[12px] font-medium text-[#8B95A1]">
+          <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3.5 min-w-0">
+            <div className="text-[11px] sm:text-[12px] font-medium text-[#8B95A1] truncate">
               이번 달 수입
             </div>
-            <div className="mt-1 text-[15px] font-semibold text-[#3182F6] tabular-nums">
+            <div className="mt-1 text-[12.5px] sm:text-[15px] font-semibold text-[#3182F6] tabular-nums tracking-tight whitespace-nowrap truncate">
               +{formatWon(monthlyIncome)}
             </div>
           </div>
 
-          <div className="bg-[#F9FAFB] rounded-2xl p-3.5">
-            <div className="text-[12px] font-medium text-[#8B95A1]">
+          <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3.5 min-w-0">
+            <div className="text-[11px] sm:text-[12px] font-medium text-[#8B95A1] truncate">
               이번 달 지출
             </div>
-            <div className="mt-1 text-[15px] font-semibold text-[#191F28] tabular-nums">
+            <div className="mt-1 text-[12.5px] sm:text-[15px] font-semibold text-[#191F28] tabular-nums tracking-tight whitespace-nowrap truncate">
               -{formatWon(monthlyExpense)}
             </div>
           </div>
         </div>
 
-        {/* 하단 원스톱 액션 버튼 3종 */}
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+        {/* 하단 원스톱 액션 버튼 3종 (모바일: AI 스캔 1행 + 지출/수입 2행 나란히) */}
+        <div className="mt-4 sm:mt-5 grid grid-cols-2 sm:grid-cols-12 gap-2 sm:gap-2.5">
           <button
             type="button"
             onClick={() => onOpenNewTransaction(true, 'expense')}
-            className="sm:col-span-6 h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15px] font-bold flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out"
+            className="col-span-2 sm:col-span-6 h-12 sm:h-13 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[15px] font-bold flex items-center justify-center gap-2 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ease-out"
           >
-            <Camera className="w-5 h-5" />
+            <Camera className="w-5 h-5 shrink-0" />
             <span>영수증 AI 스캔</span>
           </button>
 
           <button
             type="button"
             onClick={() => onOpenNewTransaction(false, 'expense')}
-            className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#F2F4F6] text-[#191F28] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+            className="sm:col-span-3 h-12 sm:h-13 px-3 rounded-2xl bg-[#F2F4F6] text-[#191F28] text-[14px] font-bold flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ease-out"
           >
-            <Minus className="w-4 h-4" />
+            <Minus className="w-4 h-4 shrink-0" />
             <span>지출 입력</span>
           </button>
 
           <button
             type="button"
             onClick={() => onOpenNewTransaction(false, 'income')}
-            className="sm:col-span-3 h-13 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+            className="sm:col-span-3 h-12 sm:h-13 px-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[14px] font-bold flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ease-out"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 shrink-0" />
             <span>수입 입력</span>
           </button>
         </div>
@@ -358,7 +345,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       )}
 
       {/* 4. 사역별 월 예산 현황 */}
-      <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
+      <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[15px] font-bold text-[#191F28]">
             사역별 월 예산 현황
@@ -391,13 +378,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             {budgetComparison.map((item) => (
               <div
                 key={item.category}
-                className="bg-[#F9FAFB] rounded-2xl p-3 space-y-1.5 tabular-nums"
+                className="bg-[#F9FAFB] rounded-2xl p-3 space-y-1.5 tabular-nums min-w-0"
               >
-                <div className="flex items-center justify-between gap-2 text-[13px]">
-                  <span className="font-semibold text-[#191F28] break-words [word-break:keep-all]">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[13px] min-w-0">
+                  <span className="font-semibold text-[#191F28] break-words [word-break:keep-all] min-w-0">
                     {item.category}
                   </span>
-                  <span className="text-[#4E5968] shrink-0">
+                  <span className="text-[#4E5968] shrink-0 whitespace-nowrap">
                     <strong className="text-[#191F28]">
                       {formatWon(item.spent)}
                     </strong>
@@ -471,7 +458,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             {[
               { id: 'all', label: '전체' },
               { id: 'income', label: '수입' },
@@ -540,13 +527,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                             onSelectTransaction(tx);
                           }
                         }}
-                        style={{ padding: '14px 20px' }}
-                        className="w-full flex items-start justify-between gap-3 rounded-2xl cursor-pointer select-none hover:bg-[#F9FAFB] active:scale-[0.97] active:bg-[#F2F4F6] transition-all duration-150 ease-out"
+                        className="w-full px-3.5 sm:px-5 py-3.5 flex items-start justify-between gap-2.5 sm:gap-3 rounded-2xl cursor-pointer select-none hover:bg-[#F9FAFB] active:scale-[0.97] active:bg-[#F2F4F6] transition-all duration-150 ease-out"
                       >
-                        <div className="flex items-start gap-3.5 min-w-0 flex-1">
+                        <div className="flex items-start gap-2.5 sm:gap-3.5 min-w-0 flex-1">
                           <div
                             style={{ backgroundColor: iconMeta.bg }}
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-[18px] shrink-0 mt-0.5"
+                            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[16px] sm:text-[18px] shrink-0 mt-0.5"
                           >
                             {iconMeta.emoji}
                           </div>

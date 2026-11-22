@@ -840,7 +840,9 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
           .join(' + ')}`;
 
   const slotAspectClass =
-    density === 2 ? 'aspect-[844/2156] max-w-[230px]' : 'aspect-[844/945] max-w-[360px]';
+    density === 2
+      ? 'aspect-[844/2156] max-w-[180px] md:max-w-[230px]'
+      : 'aspect-[844/945] max-w-[340px] sm:max-w-[360px]';
 
   const subtitle = transaction
     ? `${transaction.evidenceNo || ''} · ${transaction.title} (${formatWon(transaction.amount)})`
@@ -862,8 +864,8 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
       ) : (
         <>
           {/* 상단 바: 기준 밀도 뱃지 + 모바일 2스텝 전환 */}
-          <div className="px-5 sm:px-6 pb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E8EB] shrink-0">
-            <div className="flex items-center gap-2">
+          <div className="px-4 sm:px-6 pb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E8EB] shrink-0">
+            <div className="flex flex-wrap items-center gap-1.5">
               <span className="px-2.5 py-1 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-bold">
                 {density === 2 ? '1행2열 기준' : '2행2열 기준'}
               </span>
@@ -914,14 +916,15 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
               }`}
             >
               {/* 1-Tap 자르기 퀵바 */}
-              <div className="px-4 py-3 bg-[#FFFFFF] border-b border-[#E5E8EB] flex flex-wrap items-center gap-1.5 shrink-0">
+              <div className="px-3 sm:px-4 py-2.5 sm:py-3 bg-[#FFFFFF] border-b border-[#E5E8EB] flex flex-wrap items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={handleAutoSplit}
-                  className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all"
+                  className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] sm:text-[12.5px] font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span className="sm:hidden">자동 {recommendedCount}등분</span>
+                  <span className="hidden sm:inline">
                     자동 {recommendedCount}등분 ({recommendedSlotsPreview}칸)
                   </span>
                 </button>
@@ -929,9 +932,9 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                 <button
                   type="button"
                   onClick={handleAddCutLine}
-                  className="h-9 px-3 rounded-xl bg-[#F2F4F6] text-[#191F28] text-[12.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all"
+                  className="h-9 px-3 rounded-xl bg-[#F2F4F6] text-[#191F28] text-[12px] sm:text-[12.5px] font-semibold flex items-center gap-1 whitespace-nowrap active:scale-[0.97] transition-all"
                 >
-                  <Plus className="w-3.5 h-3.5 text-[#3182F6]" />
+                  <Plus className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
                   <span>편집점 추가</span>
                 </button>
 
@@ -939,9 +942,9 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                   type="button"
                   onClick={handleResetSplits}
                   disabled={segments.length <= 1}
-                  className="h-9 px-2.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 disabled:opacity-40 active:scale-[0.97] transition-all"
+                  className="h-9 px-2.5 rounded-xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 whitespace-nowrap disabled:opacity-40 active:scale-[0.97] transition-all"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
                   <span>초기화</span>
                 </button>
               </div>
@@ -1025,9 +1028,11 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                               e.stopPropagation();
                               handleRemoveCutLine(lineIdx);
                             }}
-                            className="w-6 h-6 -mt-[1px] rounded-full bg-[#FFEEF0] text-[#F04452] flex items-center justify-center shrink-0 active:scale-[0.92]"
+                            className="w-9 h-9 -mr-1.5 flex items-center justify-center shrink-0 active:scale-[0.92]"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <span className="w-6 h-6 rounded-full bg-[#FFEEF0] text-[#F04452] flex items-center justify-center">
+                              <X className="w-3.5 h-3.5" />
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -1243,7 +1248,7 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                                   </span>
                                 )}
 
-                                {/* 자유 배치 우하단 종횡비 고정 리사이즈 핸들 (36px 터치 히트영역) */}
+                                {/* 자유 배치 우하단 종횡비 고정 리사이즈 핸들 (조각 내부 배치로 overflow-hidden 클리핑 100% 방지) */}
                                 {vm.isCustom && (
                                   <div
                                     onPointerDown={(e) =>
@@ -1258,9 +1263,9 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                                     onPointerUp={handleCustomPiecePointerUp}
                                     onPointerCancel={handleCustomPiecePointerUp}
                                     aria-label="크기 조절"
-                                    className="absolute -right-3 -bottom-3 w-9 h-9 flex items-center justify-center cursor-nwse-resize touch-none z-30"
+                                    className="absolute right-0 bottom-0 w-9 h-9 flex items-end justify-end p-1 cursor-nwse-resize touch-none z-30"
                                   >
-                                    <span className="w-3.5 h-3.5 rounded-full bg-[#3182F6] border-2 border-[#FFFFFF] shadow-sm" />
+                                    <span className="w-4 h-4 rounded-full bg-[#3182F6] border-2 border-[#FFFFFF] shadow-sm" />
                                   </div>
                                 )}
                               </div>
@@ -1273,98 +1278,98 @@ export const ReceiptSplitEditor: React.FC<ReceiptSplitEditorProps> = ({
                 })}
               </div>
 
-              {/* 조각 선택 보조 액션바 */}
+              {/* 조각 선택 보조 액션바 (모바일 2행 고정 정리) */}
               {selectedPiece && selectedSlotVm && (
-                <div className="px-4 py-2.5 bg-[#191F28] text-[#FFFFFF] flex flex-wrap items-center justify-between gap-2 shrink-0">
-                  <span className="text-[12px] font-bold tabular-nums">
-                    {getCircledNumber(
-                      segmentOrderMap.get(selectedPiece.segId) ?? 0
-                    )}{' '}
-                    선택됨
-                    {!selectedSlotVm.isCustom &&
-                      selectedSlotVm.group.segmentIds.length > 1 &&
-                      ' · 바꿀 조각 탭'}
-                  </span>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {selectedSlotVm.isCustom && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleScaleSelectedPiece(SCALE_STEP_DOWN)}
-                          className="h-8 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 active:scale-[0.97]"
-                        >
-                          <ZoomOut className="w-3.5 h-3.5" />
-                          <span>작게</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleScaleSelectedPiece(SCALE_STEP_UP)}
-                          className="h-8 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 active:scale-[0.97]"
-                        >
-                          <ZoomIn className="w-3.5 h-3.5" />
-                          <span>크게</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSetSlotMode(selectedPiece.slotIdx, 'auto')
-                          }
-                          className="h-8 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold active:scale-[0.97]"
-                        >
-                          자동 정렬
-                        </button>
-                      </>
-                    )}
+                <div className="px-4 py-2.5 bg-[#191F28] text-[#FFFFFF] space-y-2 shrink-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-bold tabular-nums min-w-0 truncate">
+                      {getCircledNumber(
+                        segmentOrderMap.get(selectedPiece.segId) ?? 0
+                      )}{' '}
+                      선택됨
+                      {!selectedSlotVm.isCustom &&
+                        selectedSlotVm.group.segmentIds.length > 1 &&
+                        ' · 바꿀 조각 탭'}
+                    </span>
 
                     {segments.length >= 2 && (
-                      <>
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           disabled={!canMovePrevSlot}
                           onClick={() => handleMoveSelectedBetweenSlots(-1)}
-                          className="h-8 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 disabled:opacity-35 active:scale-[0.97]"
+                          className="h-9 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 whitespace-nowrap disabled:opacity-35 active:scale-[0.97]"
                         >
-                          <ArrowLeft className="w-3.5 h-3.5" />
+                          <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
                           <span>이전 칸</span>
                         </button>
                         <button
                           type="button"
                           disabled={!canMoveNextSlot}
                           onClick={() => handleMoveSelectedBetweenSlots(1)}
-                          className="h-8 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 disabled:opacity-35 active:scale-[0.97]"
+                          className="h-9 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 whitespace-nowrap disabled:opacity-35 active:scale-[0.97]"
                         >
                           <span>다음 칸</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
+                          <ArrowRight className="w-3.5 h-3.5 shrink-0" />
                         </button>
-                      </>
+                      </div>
                     )}
                   </div>
+
+                  {selectedSlotVm.isCustom && (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleScaleSelectedPiece(SCALE_STEP_DOWN)}
+                        className="h-9 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12px] font-semibold flex items-center justify-center gap-1 whitespace-nowrap active:scale-[0.97]"
+                      >
+                        <ZoomOut className="w-3.5 h-3.5 shrink-0" />
+                        <span>작게</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleScaleSelectedPiece(SCALE_STEP_UP)}
+                        className="h-9 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12px] font-semibold flex items-center justify-center gap-1 whitespace-nowrap active:scale-[0.97]"
+                      >
+                        <ZoomIn className="w-3.5 h-3.5 shrink-0" />
+                        <span>크게</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSetSlotMode(selectedPiece.slotIdx, 'auto')
+                        }
+                        className="h-9 px-2.5 rounded-lg bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12px] font-semibold flex items-center justify-center whitespace-nowrap active:scale-[0.97]"
+                      >
+                        자동 정렬
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
 
-          {/* 하단 고정 액션바 */}
-          <div className="px-5 sm:px-6 py-3.5 bg-[#FFFFFF] border-t border-[#E5E8EB] flex items-center justify-between gap-3 shrink-0">
-            <div className="text-[13px] font-bold text-[#191F28] tabular-nums">
+          {/* 하단 고정 액션바 (iOS safe-area-bottom 적용) */}
+          <div className="px-4 sm:px-6 pt-3 safe-area-bottom sm:pb-3.5 bg-[#FFFFFF] border-t border-[#E5E8EB] flex items-center justify-between gap-2.5 shrink-0">
+            <div className="text-[12.5px] sm:text-[13px] font-bold text-[#191F28] tabular-nums min-w-0 truncate">
               {isWholeSingleSegment(segments)
-                ? '원본 1장 · A4 1칸 사용'
-                : `총 ${segments.length}조각 · A4 ${slotGroups.length}칸 사용`}
+                ? '원본 1장 · A4 1칸'
+                : `총 ${segments.length}조각 · A4 ${slotGroups.length}칸`}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-11 px-4 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[13.5px] font-semibold active:scale-[0.97] transition-all"
+                className="h-11 px-4 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[13.5px] font-semibold whitespace-nowrap active:scale-[0.97] transition-all"
               >
                 취소
               </button>
               <button
                 type="button"
                 onClick={handleConfirmApply}
-                className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold active:scale-[0.97] transition-all"
+                className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13.5px] font-bold whitespace-nowrap active:scale-[0.97] transition-all"
               >
                 분할 적용
               </button>

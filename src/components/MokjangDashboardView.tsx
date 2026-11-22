@@ -10,7 +10,6 @@ import {
   Users,
 } from 'lucide-react';
 import {
-  LedgerAccount,
   MOKJANG_SUBTYPE_LABELS,
   MokjangExpenseSubType,
   MokjangGroup,
@@ -170,9 +169,9 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
   return (
     <div className="max-w-[980px] mx-auto space-y-5 pb-20 print-container">
       {/* 1. 상단 컨트롤 및 목장 필터 칩 바 */}
-      <section className="no-print bg-[#FFFFFF] rounded-3xl p-6 space-y-4">
+      <section className="no-print bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <h2 className="text-[19px] font-bold text-[#191F28]">
+          <h2 className="text-[18px] sm:text-[19px] font-bold text-[#191F28] break-words [word-break:keep-all]">
             {formatYearMonthKorean(yearMonth)} 목장별 심방·회식비 현황
           </h2>
 
@@ -180,32 +179,32 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
             <button
               type="button"
               onClick={() => setIsEditingSetup((prev) => !prev)}
-              className={`h-10 px-3.5 rounded-2xl text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150 ${
+              className={`h-10 px-3.5 rounded-2xl text-[13px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ${
                 isEditingSetup
                   ? 'bg-[#191F28] text-[#FFFFFF]'
                   : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
               }`}
             >
-              <Settings2 className="w-4 h-4" />
-              예산 설정
+              <Settings2 className="w-4 h-4 shrink-0" />
+              <span>예산 설정</span>
             </button>
 
             <button
               type="button"
               onClick={() => handleCopyShareText(selectedStat)}
-              className="h-10 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+              className="h-10 px-3.5 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all duration-150"
             >
-              <Copy className="w-4 h-4" />
-              카톡 공유 복사
+              <Copy className="w-4 h-4 shrink-0" />
+              <span>카톡 공유 복사</span>
             </button>
 
             <button
               type="button"
               onClick={() => window.print()}
-              className="h-10 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+              className="h-10 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all duration-150"
             >
-              <Printer className="w-4 h-4" />
-              인쇄
+              <Printer className="w-4 h-4 shrink-0" />
+              <span>인쇄</span>
             </button>
           </div>
         </div>
@@ -213,16 +212,16 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
         {copiedNotice && (
           <div className="px-4 py-3 rounded-2xl bg-[#E8F3FF] text-[#1B64DA] text-[13px] font-semibold flex items-center gap-2">
             <Check className="w-4 h-4 shrink-0" />
-            <span>{copiedNotice}</span>
+            <span className="break-words [word-break:keep-all]">{copiedNotice}</span>
           </div>
         )}
 
         {/* 목장 선택 필터 칩 */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
           <button
             type="button"
             onClick={() => setSelectedMokjangId('all')}
-            className={`px-4 py-2 rounded-full text-[13.5px] font-semibold shrink-0 transition-all duration-150 active:scale-[0.97] ${
+            className={`px-3.5 sm:px-4 py-2 rounded-full text-[13px] sm:text-[13.5px] font-semibold shrink-0 whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
               selectedMokjangId === 'all'
                 ? 'bg-[#3182F6] text-[#FFFFFF]'
                 : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
@@ -238,7 +237,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                 key={st.mokjang.id}
                 type="button"
                 onClick={() => setSelectedMokjangId(st.mokjang.id)}
-                className={`px-4 py-2 rounded-full text-[13.5px] font-semibold shrink-0 flex items-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+                className={`px-3.5 sm:px-4 py-2 rounded-full text-[13px] sm:text-[13.5px] font-semibold shrink-0 whitespace-nowrap flex items-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
                   active
                     ? 'bg-[#191F28] text-[#FFFFFF]'
                     : 'bg-[#F9FAFB] text-[#4E5968] hover:bg-[#E5E8EB]'
@@ -257,29 +256,161 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
           })}
         </div>
 
-        {/* 목장 및 배정예산 인라인 설정 패널 */}
+        {/* 목장 및 배정예산 인라인 설정 패널 (모바일 카드형 / 데스크톱 6열 테이블) */}
         {isEditingSetup && (
-          <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[14px] font-bold text-[#191F28]">
-                  목장 목록 및 심방비·회식비 배정 예산 관리
+          <div className="bg-[#F9FAFB] rounded-2xl p-3.5 sm:p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-bold text-[#191F28] break-words [word-break:keep-all]">
+                  목장 목록 및 배정 예산 관리
                 </div>
-                <div className="text-[12px] text-[#8B95A1]">
-                  목장명, 담당 목자, 배정 예산을 수정하면 시각화 게이지와 잔여 한도가 즉시 재계산됩니다.
+                <div className="text-[12px] text-[#8B95A1] break-words [word-break:keep-all]">
+                  수정 시 게이지와 잔여 한도가 즉시 재계산됩니다.
                 </div>
               </div>
               <button
                 type="button"
                 onClick={handleAddMokjang}
-                className="px-3 py-1.5 rounded-full bg-[#3182F6] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                className="h-9 px-3 rounded-full bg-[#3182F6] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap active:scale-[0.97] transition-all duration-150"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3.5 h-3.5 shrink-0" />
                 <span>목장 추가</span>
               </button>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* 모바일(< md): 목장별 카드 편집 리스트 (가로 잘림 0건) */}
+            <div className="md:hidden space-y-2.5">
+              {mokjangs.map((mj) => (
+                <div
+                  key={mj.id}
+                  className="bg-[#FFFFFF] rounded-2xl p-3.5 space-y-2.5 border border-[#E5E8EB]"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                        목장명
+                      </label>
+                      <input
+                        type="text"
+                        value={mj.name}
+                        onChange={(e) =>
+                          handleMokjangFieldChange(mj.id, 'name', e.target.value)
+                        }
+                        className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-[13.5px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMokjang(mj.id)}
+                      aria-label="목장 삭제"
+                      className="mt-5 w-9 h-9 rounded-xl bg-[#FFEEF0] text-[#F04452] flex items-center justify-center shrink-0 active:scale-[0.95]"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0">
+                      <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                        담당 목자
+                      </label>
+                      <input
+                        type="text"
+                        value={mj.leaderName}
+                        onChange={(e) =>
+                          handleMokjangFieldChange(
+                            mj.id,
+                            'leaderName',
+                            e.target.value
+                          )
+                        }
+                        className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-[13px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                        인원 (명)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={mj.memberCount}
+                        onChange={(e) =>
+                          handleMokjangFieldChange(
+                            mj.id,
+                            'memberCount',
+                            Math.max(1, Number(e.target.value) || 1)
+                          )
+                        }
+                        className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0">
+                      <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                        심방비 배정 (원)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumber(mj.visitationBudget)}
+                        onChange={(e) =>
+                          handleMokjangFieldChange(
+                            mj.id,
+                            'visitationBudget',
+                            parseDigits(e.target.value)
+                          )
+                        }
+                        className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-right text-[13px] font-bold text-[#3182F6] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                        회식·모임비 배정 (원)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumber(mj.fellowshipBudget)}
+                        onChange={(e) =>
+                          handleMokjangFieldChange(
+                            mj.id,
+                            'fellowshipBudget',
+                            parseDigits(e.target.value)
+                          )
+                        }
+                        className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-right text-[13px] font-bold text-[#1B64DA] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#8B95A1] mb-1">
+                      비고 (선택)
+                    </label>
+                    <input
+                      type="text"
+                      value={mj.note || ''}
+                      placeholder="특이사항"
+                      onChange={(e) =>
+                        handleMokjangFieldChange(mj.id, 'note', e.target.value)
+                      }
+                      className="w-full h-9 px-3 rounded-xl bg-[#F9FAFB] text-[12.5px] text-[#4E5968] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 데스크톱(>= md): 기존 6열 테이블 유지 */}
+            <div
+              className="hidden md:block overflow-x-auto max-w-full"
+              role="region"
+              tabIndex={0}
+              aria-label="목장별 예산 설정 표"
+            >
               <table className="w-full border-collapse text-[12.5px] tabular-nums">
                 <thead>
                   <tr className="bg-[#E5E8EB] text-[#191F28] font-bold text-left">
@@ -421,7 +552,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
       {selectedMokjangId === 'all' && mokjangs.length > 0 && (
         <div className="space-y-5">
           {/* 전체 목장 총괄 Hero 카드 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-6 space-y-5">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4 sm:space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <span className="text-[13px] font-semibold text-[#4E5968]">
@@ -524,18 +655,18 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
               return (
                 <div
                   key={st.mokjang.id}
-                  className="bg-[#FFFFFF] rounded-3xl p-6 flex flex-col justify-between space-y-4"
+                  className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 flex flex-col justify-between space-y-4"
                 >
                   <div className="space-y-4">
                     {/* 카드 상단: 목장명, 목자명, 소진율 배지 */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-[18px] font-bold text-[#191F28] break-words [word-break:keep-all]">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                          <h3 className="text-[17px] sm:text-[18px] font-bold text-[#191F28] break-words [word-break:keep-all]">
                             {st.mokjang.name}
                           </h3>
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-[12px] font-bold tabular-nums shrink-0 ${
+                            className={`px-2.5 py-0.5 rounded-full text-[11.5px] sm:text-[12px] font-bold tabular-nums shrink-0 whitespace-nowrap ${
                               isOverOrNear
                                 ? 'bg-[#FFEEF0] text-[#F04452]'
                                 : 'bg-[#E8F3FF] text-[#1B64DA]'
@@ -544,13 +675,15 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                             소진율 {st.totalRate}%
                           </span>
                         </div>
-                        <div className="text-[13px] text-[#4E5968] mt-0.5 flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-[#8B95A1]" />
+                        <div className="text-[12.5px] sm:text-[13px] text-[#4E5968] mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          <Users className="w-3.5 h-3.5 text-[#8B95A1] shrink-0" />
                           <span>
                             {st.mokjang.leaderName} · 목장원 {st.mokjang.memberCount}명
                           </span>
                           {st.mokjang.note && (
-                            <span className="text-[#8B95A1]">· {st.mokjang.note}</span>
+                            <span className="text-[#8B95A1] break-words [word-break:keep-all]">
+                              · {st.mokjang.note}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -558,7 +691,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                       <div className="text-right shrink-0">
                         <div className="text-[11px] text-[#8B95A1]">남은 총한도</div>
                         <div
-                          className={`text-[16px] font-bold tabular-nums ${
+                          className={`text-[15.5px] sm:text-[16px] font-bold tabular-nums whitespace-nowrap ${
                             st.totalRemaining < 0 ? 'text-[#F04452]' : 'text-[#191F28]'
                           }`}
                         >
@@ -569,11 +702,11 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
 
                     {/* 심방비 시각화 프로그레스 바 */}
                     <div className="bg-[#F9FAFB] rounded-2xl p-3.5 space-y-2">
-                      <div className="flex items-center justify-between text-[13px] tabular-nums">
-                        <span className="font-semibold text-[#191F28]">
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-[13px] tabular-nums">
+                        <span className="font-semibold text-[#191F28] whitespace-nowrap">
                           💐 심방비 ({st.visitationRate}%)
                         </span>
-                        <span className="text-[#4E5968]">
+                        <span className="text-[12.5px] text-[#4E5968] whitespace-nowrap">
                           사용 <strong className="text-[#191F28]">{formatWon(st.visitationSpent)}</strong> / 배정{' '}
                           {formatWon(st.mokjang.visitationBudget)}
                         </span>
@@ -588,10 +721,10 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                           }}
                         />
                       </div>
-                      <div className="flex items-center justify-between text-[12px] tabular-nums">
+                      <div className="flex items-center justify-between gap-2 text-[12px] tabular-nums">
                         <span className="text-[#8B95A1]">가용 심방비 잔액</span>
                         <span
-                          className={`font-bold ${
+                          className={`font-bold shrink-0 ${
                             st.visitationRemaining < 0
                               ? 'text-[#F04452]'
                               : 'text-[#3182F6]'
@@ -604,11 +737,11 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
 
                     {/* 회식·모임비 시각화 프로그레스 바 */}
                     <div className="bg-[#F9FAFB] rounded-2xl p-3.5 space-y-2">
-                      <div className="flex items-center justify-between text-[13px] tabular-nums">
-                        <span className="font-semibold text-[#191F28]">
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-[13px] tabular-nums">
+                        <span className="font-semibold text-[#191F28] whitespace-nowrap">
                           🍙 회식·모임비 ({st.fellowshipRate}%)
                         </span>
-                        <span className="text-[#4E5968]">
+                        <span className="text-[12.5px] text-[#4E5968] whitespace-nowrap">
                           사용 <strong className="text-[#191F28]">{formatWon(st.fellowshipSpent)}</strong> / 배정{' '}
                           {formatWon(st.mokjang.fellowshipBudget)}
                         </span>
@@ -676,18 +809,24 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
           </section>
 
           {/* 전체 목장 심방비·회식비 정산 비교 표 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-6 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[17px] font-bold text-[#191F28]">
-                목장별 심방비·회식비 예산 집행 요약표
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <h3 className="text-[16px] sm:text-[17px] font-bold text-[#191F28] min-w-0">
+                목장별 예산 집행 요약표
               </h3>
-              <span className="text-[12px] text-[#8B95A1] tabular-nums">
-                행 클릭 시 해당 목장 단독 공유 화면으로 전환됩니다
+              <span className="text-[11.5px] sm:text-[12px] text-[#8B95A1]">
+                <span className="md:hidden">좌우로 밀어 전체 열 보기 · 행 선택 시 단독 보기</span>
+                <span className="hidden md:inline">행 클릭 시 해당 목장 단독 화면으로 전환</span>
               </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse border border-[#E5E8EB] text-[13px] tabular-nums">
+            <div
+              className="overflow-x-auto max-w-full"
+              role="region"
+              tabIndex={0}
+              aria-label="목장별 예산 비교표"
+            >
+              <table className="w-full min-w-[600px] border-collapse border border-[#E5E8EB] text-[12.5px] sm:text-[13px] tabular-nums">
                 <thead>
                   <tr className="bg-[#F2F4F6] text-[#191F28] font-bold text-center">
                     <th className="border border-[#E5E8EB] py-2.5 px-3 text-left">
@@ -777,7 +916,7 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
       {selectedStat && (
         <div className="space-y-5">
           {/* 특정 목장 전용 Hero 카드 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-6 space-y-5">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4 sm:space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -927,13 +1066,13 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
           </section>
 
           {/* 선택된 목장의 상세 지출 내역 리스트 (멀티라인 줄바꿈 지원) */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-[18px] font-bold text-[#191F28]">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+                <h3 className="text-[17px] sm:text-[18px] font-bold text-[#191F28] break-words [word-break:keep-all]">
                   {selectedStat.mokjang.name} 상세 사용 내역
                 </h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-bold tabular-nums">
+                <span className="px-2.5 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[12.5px] font-bold tabular-nums shrink-0">
                   {selectedStat.transactions.length}건
                 </span>
               </div>
@@ -941,10 +1080,10 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleCopyShareText(selectedStat)}
-                className="no-print px-3.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
+                className="no-print px-3.5 py-2 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12.5px] font-semibold flex items-center gap-1.5 shrink-0 whitespace-nowrap active:scale-[0.97] transition-all duration-150"
               >
-                <Copy className="w-3.5 h-3.5" />
-                {selectedStat.mokjang.leaderName}님 공유용 요약 복사
+                <Copy className="w-3.5 h-3.5 shrink-0" />
+                <span>{selectedStat.mokjang.leaderName} 공유 복사</span>
               </button>
             </div>
 
@@ -979,10 +1118,10 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                           onSelectTransaction(tx);
                         }
                       }}
-                      className="w-full p-4 rounded-2xl bg-[#F9FAFB] hover:bg-[#F2F4F6] flex items-start justify-between gap-4 cursor-pointer active:scale-[0.97] transition-all duration-150"
+                      className="w-full p-3.5 sm:p-4 rounded-2xl bg-[#F9FAFB] hover:bg-[#F2F4F6] flex items-start justify-between gap-3 sm:gap-4 cursor-pointer active:scale-[0.97] transition-all duration-150"
                     >
-                      <div className="flex items-start gap-3.5 min-w-0 flex-1">
-                        <div className="w-10 h-10 rounded-full bg-[#FFFFFF] flex items-center justify-center text-[18px] shrink-0">
+                      <div className="flex items-start gap-2.5 sm:gap-3.5 min-w-0 flex-1">
+                        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#FFFFFF] flex items-center justify-center text-[16px] sm:text-[18px] shrink-0">
                           {isVisitation ? '💐' : '🍙'}
                         </div>
 
@@ -1013,24 +1152,21 @@ export const MokjangDashboardView: React.FC<MokjangDashboardViewProps> = ({
                             )}
                           </div>
 
-                          <div className="text-[15.5px] font-semibold text-[#191F28] whitespace-pre-wrap break-words [word-break:keep-all]">
+                          <div className="text-[15px] sm:text-[15.5px] font-semibold text-[#191F28] whitespace-pre-wrap break-words [word-break:keep-all]">
                             {tx.title}
                           </div>
 
                           {tx.memo && (
-                            <div className="text-[13px] text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all]">
+                            <div className="text-[12.5px] sm:text-[13px] text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all]">
                               산출근거: {tx.memo}
                             </div>
                           )}
                         </div>
                       </div>
 
-                      <div className="text-right shrink-0 tabular-nums">
-                        <div className="text-[16px] font-bold text-[#191F28]">
+                      <div className="text-right shrink-0 tabular-nums pt-0.5">
+                        <div className="text-[15.5px] sm:text-[16px] font-bold text-[#191F28] whitespace-nowrap">
                           -{formatWon(tx.amount)}
-                        </div>
-                        <div className="text-[12px] text-[#8B95A1] mt-0.5">
-                          클릭하여 영수증 보기
                         </div>
                       </div>
                     </div>

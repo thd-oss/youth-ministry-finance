@@ -8,12 +8,42 @@
     background-color: #F2F4F6;
   }
 
+  html {
+    scroll-padding-top: calc(116px + env(safe-area-inset-top, 0px));
+    scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+
   body {
     margin: 0;
     background-color: #F2F4F6;
     color: #191F28;
     letter-spacing: -0.025em;
+    overflow-x: clip;
+    overflow-wrap: break-word;
     -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-area-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .sticky-bottom-safe {
+    bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -155,6 +185,7 @@ dialog::backdrop {
   body {
     background: #FFFFFF !important;
     color: #191F28 !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     margin: 0 !important;

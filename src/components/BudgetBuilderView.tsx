@@ -692,7 +692,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
     return (
       <form
         onSubmit={handleSubmitInlineAdd}
-        className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3 border border-[#E5E8EB]"
+        className="bg-[#F9FAFB] rounded-2xl p-3 sm:p-4 space-y-3 border border-[#E5E8EB]"
       >
         <div className="flex items-center justify-between gap-2">
           <span className="text-[13px] font-bold text-[#191F28] truncate">
@@ -702,7 +702,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             type="button"
             onClick={() => setAddingTarget(null)}
             aria-label="입력 닫기"
-            className="w-7 h-7 rounded-full bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center hover:bg-[#E5E8EB] shrink-0"
+            className="w-8 h-8 rounded-full bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center hover:bg-[#E5E8EB] shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -856,9 +856,9 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           ))}
         </div>
 
-        {/* 단가 × 수량 × 횟수 간편 계산기 */}
-        <div className="grid grid-cols-3 gap-2">
-          <div>
+        {/* 단가 × 수량 × 횟수 간편 계산기 (모바일 2행: 단가 풀폭 + 수량|횟수 2열) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="col-span-2 sm:col-span-1">
             <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
               단가 (원)
             </label>
@@ -873,14 +873,14 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 });
               }}
               placeholder="예: 10,000"
-              className="w-full h-9 px-2.5 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+              className="w-full min-w-0 h-9 px-2.5 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
             />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
               수량
             </label>
-            <div className="flex gap-1">
+            <div className="flex gap-1 min-w-0">
               <input
                 type="text"
                 inputMode="numeric"
@@ -892,7 +892,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   });
                 }}
                 placeholder="40"
-                className="w-full h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                className="min-w-0 flex-1 h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
               />
               <select
                 value={draft.qtyUnit}
@@ -900,7 +900,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   updateDraftMultipliers({ qtyUnit: e.target.value })
                 }
                 aria-label="수량 단위"
-                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] focus:outline-none"
+                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
               >
                 <option value="명">명</option>
                 <option value="개월">개월</option>
@@ -910,11 +910,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               </select>
             </div>
           </div>
-          <div>
+          <div className="min-w-0">
             <label className="block text-[11px] font-medium text-[#8B95A1] mb-1">
               횟수
             </label>
-            <div className="flex gap-1">
+            <div className="flex gap-1 min-w-0">
               <input
                 type="text"
                 inputMode="numeric"
@@ -926,7 +926,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   });
                 }}
                 placeholder="1"
-                className="w-full h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+                className="min-w-0 flex-1 h-9 px-2 rounded-xl bg-[#FFFFFF] text-right text-[13px] font-semibold text-[#191F28] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
               />
               <select
                 value={draft.freqUnit}
@@ -934,7 +934,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   updateDraftMultipliers({ freqUnit: e.target.value })
                 }
                 aria-label="횟수 단위"
-                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] focus:outline-none"
+                className="h-9 px-1.5 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#4E5968] shrink-0 focus:outline-none"
               >
                 <option value="회">회</option>
                 <option value="개월">개월</option>
@@ -1053,7 +1053,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       return (
         <div
           key={item.id}
-          className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3 border border-[#3182F6]/30"
+          className="bg-[#F9FAFB] rounded-2xl p-3 sm:p-4 space-y-3 border border-[#3182F6]/30"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="text-[12.5px] font-bold text-[#3182F6]">
@@ -1063,17 +1063,17 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleRemoveRow(item.id)}
-                className="h-7 px-2.5 rounded-lg bg-[#FFEEF0] text-[#F04452] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                className="h-8 px-2.5 rounded-lg bg-[#FFEEF0] text-[#F04452] text-[12px] font-bold flex items-center gap-1 whitespace-nowrap active:scale-[0.97]"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-3.5 h-3.5" />
                 <span>삭제</span>
               </button>
               <button
                 type="button"
                 onClick={() => setEditingItemId(null)}
-                className="h-7 px-3 rounded-lg bg-[#3182F6] text-[#FFFFFF] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                className="h-8 px-3 rounded-lg bg-[#3182F6] text-[#FFFFFF] text-[12px] font-bold flex items-center gap-1 whitespace-nowrap active:scale-[0.97]"
               >
-                <Check className="w-3 h-3" />
+                <Check className="w-3.5 h-3.5" />
                 <span>완료</span>
               </button>
             </div>
@@ -1208,8 +1208,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             </div>
           </div>
 
-          {/* 간편 단가 자동계산 보조줄 */}
-          <div className="grid grid-cols-3 gap-2 pt-1">
+          {/* 간편 단가 자동계산 보조줄 (모바일 2행: 단가 풀폭 + 수량|횟수 2열) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
             <input
               type="text"
               inputMode="numeric"
@@ -1227,10 +1227,10 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   editCalcFreqUnit
                 );
               }}
-              placeholder="단가(자동계산)"
-              className="h-8 px-2.5 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+              placeholder="단가 (자동계산)"
+              className="col-span-2 sm:col-span-1 w-full min-w-0 h-9 px-2.5 rounded-lg bg-[#FFFFFF] text-right text-[12.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
             />
-            <div className="flex gap-1">
+            <div className="flex gap-1 min-w-0">
               <input
                 type="text"
                 inputMode="numeric"
@@ -1249,7 +1249,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   );
                 }}
                 placeholder="수량"
-                className="w-full h-8 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+                className="min-w-0 flex-1 h-9 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
               />
               <select
                 value={editCalcQtyUnit}
@@ -1264,7 +1264,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                     editCalcFreqUnit
                   );
                 }}
-                className="h-8 px-1 rounded-lg bg-[#FFFFFF] text-[11px] text-[#4E5968]"
+                aria-label="수량 단위"
+                className="h-9 px-1.5 rounded-lg bg-[#FFFFFF] text-[12px] text-[#4E5968] shrink-0 focus:outline-none"
               >
                 <option value="명">명</option>
                 <option value="개월">개월</option>
@@ -1272,7 +1273,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 <option value="식">식</option>
               </select>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1 min-w-0">
               <input
                 type="text"
                 inputMode="numeric"
@@ -1291,7 +1292,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   );
                 }}
                 placeholder="횟수"
-                className="w-full h-8 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12px] text-[#4E5968] tabular-nums focus:outline-none"
+                className="min-w-0 flex-1 h-9 px-2 rounded-lg bg-[#FFFFFF] text-right text-[12.5px] text-[#4E5968] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
               />
               <select
                 value={editCalcFreqUnit}
@@ -1306,7 +1307,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                     e.target.value
                   );
                 }}
-                className="h-8 px-1 rounded-lg bg-[#FFFFFF] text-[11px] text-[#4E5968]"
+                aria-label="횟수 단위"
+                className="h-9 px-1.5 rounded-lg bg-[#FFFFFF] text-[12px] text-[#4E5968] shrink-0 focus:outline-none"
               >
                 <option value="회">회</option>
                 <option value="개월">개월</option>
@@ -1422,14 +1424,14 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   key={group.key}
                   className="bg-[#FFFFFF] rounded-3xl overflow-hidden"
                 >
-                  {/* 1차 분류 헤더 */}
-                  <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-2 bg-[#FFFFFF]">
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  {/* 1차 분류 헤더 (모바일 2행으로 분류명 말줄임 방지, sm 이상 1행 유지) */}
+                  <div className="px-3.5 py-3.5 sm:px-5 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-[#FFFFFF]">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <button
                         type="button"
                         onClick={() => toggleGroupCollapsed(group.key)}
                         aria-label={isCollapsed ? '펼치기' : '접기'}
-                        className="w-7 h-7 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center shrink-0 hover:bg-[#E5E8EB] active:scale-[0.97]"
+                        className="w-8 h-8 rounded-xl bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center shrink-0 hover:bg-[#E5E8EB] active:scale-[0.97]"
                       >
                         {isCollapsed ? (
                           <ChevronRight className="w-4 h-4" />
@@ -1463,7 +1465,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                               }
                             }}
                             autoFocus
-                            className="h-8 px-2.5 rounded-lg bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6] max-w-[180px]"
+                            className="h-8 px-2.5 rounded-lg bg-[#F9FAFB] text-[14px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6] min-w-0 flex-1 max-w-[200px]"
                           />
                           <button
                             type="button"
@@ -1474,28 +1476,28 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                 renameGroupValue
                               )
                             }
-                            className="w-7 h-7 rounded-lg bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center"
+                            className="w-8 h-8 rounded-lg bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center shrink-0"
                           >
                             <Check className="w-3.5 h-3.5" />
                           </button>
                           <button
                             type="button"
                             onClick={() => setRenamingGroupKey(null)}
-                            className="w-7 h-7 rounded-lg bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center"
+                            className="w-8 h-8 rounded-lg bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center shrink-0"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           <button
                             type="button"
                             onClick={() => toggleGroupCollapsed(group.key)}
-                            className="text-[15.5px] font-bold text-[#191F28] truncate text-left"
+                            className="text-[15px] sm:text-[15.5px] font-bold text-[#191F28] break-words [word-break:keep-all] sm:truncate text-left"
                           >
                             {group.category}
                           </button>
-                          <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[11.5px] font-semibold tabular-nums shrink-0">
+                          <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[11px] font-semibold tabular-nums shrink-0 whitespace-nowrap">
                             {group.items.length}건
                           </span>
                           <button
@@ -1507,25 +1509,25 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                             }}
                             aria-label="1차 분류 이름 변경"
                             title="1차 분류 이름 변경"
-                            className="w-6 h-6 rounded-lg text-[#8B95A1] hover:text-[#191F28] hover:bg-[#F2F4F6] flex items-center justify-center shrink-0"
+                            className="w-8 h-8 rounded-lg text-[#8B95A1] hover:text-[#191F28] hover:bg-[#F2F4F6] flex items-center justify-center shrink-0"
                           >
-                            <Pencil className="w-3 h-3" />
+                            <Pencil className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       )}
                     </div>
 
-                    {/* 우측: 그룹 소계 · 비중(%) · [+ 항목] */}
-                    <div className="flex items-center gap-2.5 shrink-0 tabular-nums">
-                      <div className="text-right">
+                    {/* 우측(모바일 2행): 그룹 소계 · 비중(%) · [+ 항목] */}
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 pl-10 sm:pl-0 shrink-0 tabular-nums">
+                      <div className="flex items-baseline gap-2 sm:block sm:text-right">
                         <div
-                          className={`text-[15.5px] font-bold ${
+                          className={`text-[15px] sm:text-[15.5px] font-bold whitespace-nowrap ${
                             isIncome ? 'text-[#3182F6]' : 'text-[#191F28]'
                           }`}
                         >
                           {formatWon(group.subtotal)}
                         </div>
-                        <div className="text-[11px] font-semibold text-[#8B95A1]">
+                        <div className="text-[11px] font-semibold text-[#8B95A1] whitespace-nowrap">
                           비중 {group.sharePercent}%
                         </div>
                       </div>
@@ -1535,7 +1537,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         onClick={() =>
                           openInlineAdd(entryType, group.category, null)
                         }
-                        className="h-8 px-2.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 active:scale-[0.97] transition-all"
+                        className="h-8 px-2.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center gap-1 whitespace-nowrap active:scale-[0.97] transition-all"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>항목</span>
@@ -1544,7 +1546,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                   </div>
 
                   {/* 그룹 비중 얇은 바 */}
-                  <div className="px-5">
+                  <div className="px-3.5 sm:px-5">
                     <div className="h-1 rounded-full bg-[#F2F4F6] overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-300"
@@ -1558,8 +1560,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 
                   {/* 2차 소그룹 & 3차 세부 항목 유연 공존 트리 */}
                   {!isCollapsed && (
-                    <div className="px-5 pt-2.5 pb-4">
-                      <div className="border-l-2 border-[#E5E8EB] ml-3 pl-3.5 space-y-2">
+                    <div className="px-3 sm:px-5 pt-2.5 pb-3.5 sm:pb-4">
+                      <div className="border-l-2 border-[#E5E8EB] ml-1.5 pl-2.5 sm:ml-3 sm:pl-3.5 space-y-2">
                         {group.subGroups.map((subGroup) => {
                           const isAddingInThisSub =
                             addingTarget?.entryType === entryType &&
@@ -1583,10 +1585,10 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                             return (
                               <div
                                 key={subGroup.key}
-                                className="rounded-2xl bg-[#F9FAFB] p-3 space-y-2"
+                                className="rounded-2xl bg-[#F9FAFB] p-2.5 sm:p-3 space-y-2"
                               >
                                 {/* 2차 소그룹 헤더 */}
-                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
                                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                     <button
                                       type="button"
@@ -1596,7 +1598,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                       aria-label={
                                         isSubCollapsed ? '펼치기' : '접기'
                                       }
-                                      className="w-6 h-6 rounded-lg bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center shrink-0 hover:bg-[#E5E8EB]"
+                                      className="w-8 h-8 rounded-lg bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center shrink-0 hover:bg-[#E5E8EB]"
                                     >
                                       {isSubCollapsed ? (
                                         <ChevronRight className="w-3.5 h-3.5" />
@@ -1628,7 +1630,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                             }
                                           }}
                                           autoFocus
-                                          className="h-7 px-2 rounded-lg bg-[#FFFFFF] text-[13px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6] max-w-[160px]"
+                                          className="h-8 px-2 rounded-lg bg-[#FFFFFF] text-[13px] font-bold text-[#191F28] focus:outline-none focus:ring-2 focus:ring-[#3182F6] min-w-0 flex-1 max-w-[160px]"
                                         />
                                         <button
                                           type="button"
@@ -1640,22 +1642,22 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                               renameSubGroupValue
                                             )
                                           }
-                                          className="w-6 h-6 rounded-lg bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center"
+                                          className="w-8 h-8 rounded-lg bg-[#3182F6] text-[#FFFFFF] flex items-center justify-center shrink-0"
                                         >
-                                          <Check className="w-3 h-3" />
+                                          <Check className="w-3.5 h-3.5" />
                                         </button>
                                         <button
                                           type="button"
                                           onClick={() =>
                                             setRenamingSubGroupKey(null)
                                           }
-                                          className="w-6 h-6 rounded-lg bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center"
+                                          className="w-8 h-8 rounded-lg bg-[#FFFFFF] text-[#4E5968] flex items-center justify-center shrink-0"
                                         >
-                                          <X className="w-3 h-3" />
+                                          <X className="w-3.5 h-3.5" />
                                         </button>
                                       </div>
                                     ) : (
-                                      <div className="flex items-center gap-1.5 min-w-0">
+                                      <div className="flex items-center gap-1 min-w-0">
                                         <button
                                           type="button"
                                           onClick={() =>
@@ -1683,7 +1685,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                           }}
                                           aria-label="2차 분류 이름 변경"
                                           title="2차 분류 이름 변경"
-                                          className="w-6 h-6 rounded-lg text-[#8B95A1] hover:text-[#191F28] hover:bg-[#FFFFFF] flex items-center justify-center shrink-0"
+                                          className="w-8 h-8 rounded-lg text-[#8B95A1] hover:text-[#191F28] hover:bg-[#FFFFFF] flex items-center justify-center shrink-0"
                                         >
                                           <Pencil className="w-3 h-3" />
                                         </button>
@@ -1693,7 +1695,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 
                                   <div className="flex items-center gap-2 shrink-0 tabular-nums">
                                     <span
-                                      className={`text-[13.5px] font-bold ${
+                                      className={`text-[13.5px] font-bold whitespace-nowrap ${
                                         isIncome
                                           ? 'text-[#3182F6]'
                                           : 'text-[#191F28]'
@@ -1710,7 +1712,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                           subGroup.subCategory
                                         )
                                       }
-                                      className="h-7 px-2 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-0.5 active:scale-[0.97]"
+                                      className="h-8 px-2.5 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-0.5 whitespace-nowrap active:scale-[0.97]"
                                     >
                                       <Plus className="w-3 h-3" />
                                       <span>3차</span>
@@ -1720,7 +1722,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 
                                 {/* 3차 세부 항목 리스트 */}
                                 {!isSubCollapsed && (
-                                  <div className="border-l-2 border-[#E5E8EB] ml-2.5 pl-3 space-y-1.5">
+                                  <div className="border-l-2 border-[#E5E8EB] ml-1 pl-2 sm:ml-2.5 sm:pl-3 space-y-1.5">
                                     {subGroup.items.map((item) => {
                                       if (editingItemId === item.id) {
                                         return renderInlineEditCard(
@@ -1755,7 +1757,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                               handleOpenEditItem(item);
                                             }
                                           }}
-                                          className="group px-3 py-2 rounded-xl bg-[#FFFFFF] hover:bg-[#F2F4F6] flex items-center justify-between gap-2.5 cursor-pointer transition-all duration-150 active:scale-[0.99]"
+                                          className="group px-2.5 sm:px-3 py-2.5 rounded-xl bg-[#FFFFFF] hover:bg-[#F2F4F6] flex items-start justify-between gap-2 cursor-pointer transition-all duration-150 active:scale-[0.99]"
                                         >
                                           <div className="min-w-0 flex-1">
                                             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -1779,9 +1781,9 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                             )}
                                           </div>
 
-                                          <div className="flex items-center gap-2 shrink-0">
+                                          <div className="flex items-center gap-2 shrink-0 pt-0.5">
                                             <span
-                                              className={`text-[14px] font-bold tabular-nums ${
+                                              className={`text-[13.5px] sm:text-[14px] font-bold tabular-nums whitespace-nowrap ${
                                                 isIncome
                                                   ? 'text-[#3182F6]'
                                                   : 'text-[#191F28]'
@@ -1789,7 +1791,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                             >
                                               {formatWon(item.amount)}
                                             </span>
-                                            <Pencil className="w-3.5 h-3.5 text-[#8B95A1] opacity-60 group-hover:opacity-100 group-hover:text-[#3182F6] transition-opacity" />
+                                            <Pencil className="hidden sm:block w-3.5 h-3.5 text-[#8B95A1] opacity-60 group-hover:opacity-100 group-hover:text-[#3182F6] transition-opacity" />
                                           </div>
                                         </div>
                                       );
@@ -1812,7 +1814,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                             );
                           }
 
-                          // Case B: 단순 2차 1줄 항목 (항목 1건 + detailCategory 없음 -> 래퍼 없이 깔끔하게)
+                          // Case B: 단순 2차 1줄 항목 (모바일 2단 분리로 제목·금액 폭 확보)
                           const item = subGroup.items[0];
                           if (!item) return null;
                           if (editingItemId === item.id) {
@@ -1839,30 +1841,52 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                   handleOpenEditItem(item);
                                 }
                               }}
-                              className="group px-3.5 py-2.5 rounded-2xl bg-[#F9FAFB] hover:bg-[#F2F4F6] flex items-center justify-between gap-3 cursor-pointer transition-all duration-150 active:scale-[0.99]"
+                              className="group px-3 sm:px-3.5 py-2.5 rounded-2xl bg-[#F9FAFB] hover:bg-[#F2F4F6] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 cursor-pointer transition-all duration-150 active:scale-[0.99]"
                             >
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                  <span className="text-[14px] font-bold text-[#191F28] break-words [word-break:keep-all]">
-                                    {displaySub}
-                                  </span>
-                                  {displayDesc && (
-                                    <span className="text-[12.5px] text-[#4E5968] break-words [word-break:keep-all]">
-                                      {displayDesc}
+                              <div className="flex items-start justify-between gap-2 sm:block min-w-0 sm:flex-1">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <span className="text-[14px] font-bold text-[#191F28] break-words [word-break:keep-all]">
+                                      {displaySub}
                                     </span>
+                                    {displayDesc && (
+                                      <span className="text-[12.5px] text-[#4E5968] break-words [word-break:keep-all]">
+                                        {displayDesc}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {(item.formula || item.note) && (
+                                    <div className="hidden sm:block mt-0.5 text-[11.5px] text-[#8B95A1] tabular-nums break-words [word-break:keep-all]">
+                                      {item.formula}
+                                      {item.formula && item.note ? ' · ' : ''}
+                                      {item.note}
+                                    </div>
                                   )}
                                 </div>
 
-                                {(item.formula || item.note) && (
-                                  <div className="mt-0.5 text-[11.5px] text-[#8B95A1] tabular-nums break-words [word-break:keep-all]">
+                                <span
+                                  className={`sm:hidden text-[14px] font-bold tabular-nums whitespace-nowrap shrink-0 pt-0.5 ${
+                                    isIncome
+                                      ? 'text-[#3182F6]'
+                                      : 'text-[#191F28]'
+                                  }`}
+                                >
+                                  {formatWon(item.amount)}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
+                                {(item.formula || item.note) ? (
+                                  <div className="sm:hidden text-[11px] text-[#8B95A1] tabular-nums break-words [word-break:keep-all] min-w-0 flex-1">
                                     {item.formula}
                                     {item.formula && item.note ? ' · ' : ''}
                                     {item.note}
                                   </div>
+                                ) : (
+                                  <span className="sm:hidden" />
                                 )}
-                              </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1873,13 +1897,13 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                       subGroup.subCategory
                                     );
                                   }}
-                                  className="h-7 px-2 rounded-lg bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E8F3FF] hover:text-[#1B64DA] text-[11px] font-bold flex items-center gap-0.5 active:scale-[0.97]"
+                                  className="h-8 px-2.5 rounded-lg bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E8F3FF] hover:text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-0.5 whitespace-nowrap shrink-0 active:scale-[0.97]"
                                 >
                                   <Plus className="w-3 h-3" />
                                   <span>3차</span>
                                 </button>
                                 <span
-                                  className={`text-[14.5px] font-bold tabular-nums ${
+                                  className={`hidden sm:inline text-[14.5px] font-bold tabular-nums whitespace-nowrap ${
                                     isIncome
                                       ? 'text-[#3182F6]'
                                       : 'text-[#191F28]'
@@ -1887,7 +1911,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                 >
                                   {formatWon(item.amount)}
                                 </span>
-                                <Pencil className="w-3.5 h-3.5 text-[#8B95A1] opacity-60 group-hover:opacity-100 group-hover:text-[#3182F6] transition-opacity" />
+                                <Pencil className="hidden sm:block w-3.5 h-3.5 text-[#8B95A1] opacity-60 group-hover:opacity-100 group-hover:text-[#3182F6] transition-opacity" />
                               </div>
                             </div>
                           );
@@ -1917,11 +1941,11 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   };
 
   return (
-    <div className="space-y-5 pb-28 print-container">
+    <div className="space-y-5 pb-28 sm:pb-16 print-container">
       {/* =====================================================================
           상단 컨트롤 바 (.no-print)
          ===================================================================== */}
-      <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
+      <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <h2 className="text-[19px] font-bold text-[#191F28]">
             예산안 · 청구서
@@ -1931,7 +1955,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             <button
               type="button"
               onClick={handleClearAllItems}
-              className="h-9 px-3 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-bold flex items-center gap-1.5 active:scale-[0.97] transition-all"
+              className="h-9 px-3 rounded-2xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
             >
               <Eraser className="w-3.5 h-3.5" />
               <span>비우기</span>
@@ -1940,7 +1964,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             <button
               type="button"
               onClick={handleResetTemplate}
-              className="h-9 px-3 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all"
+              className="h-9 px-3 rounded-2xl bg-[#F2F4F6] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>샘플 복원</span>
@@ -1949,7 +1973,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
             <button
               type="button"
               onClick={() => window.print()}
-              className="h-9 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all"
+              className="h-9 px-4 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap active:scale-[0.97] transition-all"
             >
               <Printer className="w-4 h-4" />
               <span>인쇄 / PDF</span>
@@ -1962,7 +1986,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveTemplate('annual_budget')}
-            className={`py-2.5 px-4 rounded-xl text-[13.5px] font-bold transition-all duration-150 active:scale-[0.97] ${
+            className={`py-2.5 px-2.5 sm:px-4 rounded-xl text-[13px] sm:text-[13.5px] font-bold whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
               activeTemplate === 'annual_budget'
                 ? 'bg-[#FFFFFF] text-[#191F28]'
                 : 'text-[#4E5968] hover:text-[#191F28]'
@@ -1974,7 +1998,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveTemplate('retreat_claim')}
-            className={`py-2.5 px-4 rounded-xl text-[13.5px] font-bold transition-all duration-150 active:scale-[0.97] ${
+            className={`py-2.5 px-2.5 sm:px-4 rounded-xl text-[13px] sm:text-[13.5px] font-bold whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
               activeTemplate === 'retreat_claim'
                 ? 'bg-[#FFFFFF] text-[#191F28]'
                 : 'text-[#4E5968] hover:text-[#191F28]'
@@ -2062,7 +2086,7 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
       {screenMode === 'card_editor' && (
         <div className="no-print max-w-[980px] mx-auto space-y-5">
           {/* 1. 예산 총액 요약 + 사역별 비중 막대 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <span className="text-[12px] font-bold text-[#3182F6]">
@@ -2162,15 +2186,15 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           {renderSection('income', incomeGroups, totalIncome)}
 
           {/* 4. 문서 개요 · 자체부담금 · 수령계좌 설정 아코디언 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 space-y-3">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-5 space-y-3">
             <button
               type="button"
               onClick={() => setIsDocMetaExpanded((prev) => !prev)}
-              className="w-full flex items-center justify-between text-left"
+              className="w-full flex items-center justify-between gap-2 text-left"
             >
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-[#3182F6]" />
-                <span className="text-[14px] font-bold text-[#191F28]">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <SlidersHorizontal className="w-4 h-4 text-[#3182F6] shrink-0" />
+                <span className="text-[14px] font-bold text-[#191F28] break-words [word-break:keep-all]">
                   문서 정보 · 자체 부담금 · 수령 계좌 설정
                 </span>
               </div>
@@ -2347,32 +2371,34 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           </section>
 
           {/* 5. 하단 고정 미리보기/인쇄 바 */}
-          <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] text-[#8B95A1]">
+          <div className="sticky sticky-bottom-safe z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] text-[#8B95A1] truncate">
                 실청구/요청 총액 ({doc.items.length}건)
               </div>
-              <div className="text-[16px] font-bold tabular-nums truncate">
+              <div className="text-[15.5px] sm:text-[16px] font-bold tabular-nums truncate">
                 {formatWon(netChurchClaimAmount)}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 type="button"
                 onClick={() => setScreenMode('a4_preview')}
-                className="h-10 px-3.5 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97]"
+                className="h-10 px-3 sm:px-3.5 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97]"
               >
-                <Eye className="w-4 h-4" />
-                <span>A4 미리보기</span>
+                <Eye className="w-4 h-4 shrink-0" />
+                <span className="sm:hidden">미리보기</span>
+                <span className="hidden sm:inline">A4 미리보기</span>
               </button>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 active:scale-[0.97]"
+                className="h-10 px-3 sm:px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97]"
               >
-                <Printer className="w-4 h-4" />
-                <span>인쇄/PDF</span>
+                <Printer className="w-4 h-4 shrink-0" />
+                <span className="sm:hidden">인쇄</span>
+                <span className="hidden sm:inline">인쇄/PDF</span>
               </button>
             </div>
           </div>
@@ -2383,8 +2409,15 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
           모드 B & 실제 인쇄 DOM: 1차 구분별 그룹핑 + 소계 포함 A4 예산서
          ===================================================================== */}
       <div
+        role={a4ZoomMode === 'actual' ? 'region' : undefined}
+        tabIndex={a4ZoomMode === 'actual' ? 0 : undefined}
+        aria-label={a4ZoomMode === 'actual' ? '예산서 A4 미리보기' : undefined}
         className={`max-w-[980px] mx-auto print-force-show ${
           screenMode === 'card_editor' ? 'hidden' : 'block'
+        } ${
+          a4ZoomMode === 'actual'
+            ? 'overflow-x-auto max-w-full print:overflow-visible'
+            : ''
         }`}
       >
         <A4ScalePreview zoomMode={a4ZoomMode}>
@@ -2453,8 +2486,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 )}
               </div>
 
-              {/* 한글 금액 강조 박스 */}
-              <div className="mt-4 bg-[#F9FAFB] border-2 border-[#191F28] rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              {/* 한글 금액 강조 박스 (A4 인쇄 규격 고정: 모바일 뷰포트 분기 배제) */}
+              <div className="mt-4 bg-[#F9FAFB] border-2 border-[#191F28] rounded-xl p-3.5 flex flex-row items-center justify-between gap-2">
                 <div className="text-[12.5px] font-bold text-[#4E5968]">
                   {activeTemplate === 'retreat_claim'
                     ? '■ 교회 재정 실청구 금액 (총 소요예산 - 자체 부담금)'
@@ -2881,8 +2914,8 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                         />
                       </td>
                       <td className="border border-[#191F28] py-1.5 px-2 align-middle">
-                        <div className="flex items-center justify-end gap-0.5 font-semibold text-[#4E5968]">
-                          <span>-</span>
+                        <div className="flex items-center justify-end gap-0.5 w-full min-w-0 font-semibold text-[#4E5968]">
+                          <span className="shrink-0">-</span>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -2893,9 +2926,9 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                                 parseDigits(e.target.value)
                               )
                             }
-                            className="w-24 text-right bg-transparent focus:outline-none focus:bg-[#F9FAFB] rounded px-1 py-0.5 tabular-nums"
+                            className="w-full min-w-0 flex-1 text-right bg-transparent focus:outline-none focus:bg-[#F9FAFB] rounded px-0.5 py-0.5 tabular-nums"
                           />
-                          <span>원</span>
+                          <span className="shrink-0">원</span>
                         </div>
                       </td>
                       <td className="border border-[#191F28] py-1.5 px-2 text-center text-[10.5px] text-[#8B95A1] align-middle">

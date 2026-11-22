@@ -22,10 +22,10 @@ export const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
   const mirrorText = value.endsWith('\n') ? `${value} ` : value;
 
   return (
-    <div className="growable-textarea w-full">
+    <div className="growable-textarea w-full min-w-0">
       <div
         aria-hidden="true"
-        className={`growable-textarea-mirror whitespace-pre-wrap break-words [word-break:keep-all] leading-snug ${className}`}
+        className={`growable-textarea-mirror whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:keep-all] leading-snug ${className}`}
       >
         {value ? (
           mirrorText
@@ -39,7 +39,7 @@ export const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
         value={value}
         placeholder={placeholder}
         onChange={onChange}
-        className={`growable-textarea-input block w-full bg-transparent whitespace-pre-wrap break-words [word-break:keep-all] leading-snug focus:outline-none ${className}`}
+        className={`growable-textarea-input block w-full bg-transparent whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:keep-all] leading-snug focus:outline-none ${className}`}
         {...rest}
       />
     </div>

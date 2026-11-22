@@ -104,20 +104,25 @@ export const TdsDialog: React.FC<TdsDialogProps> = ({
         )}
 
         {/* 시트 헤더 */}
-        <div className="px-6 pt-4 pb-3 flex items-start justify-between shrink-0">
-          <div>
-            <h2 id={titleId} className="text-[19px] font-bold text-[#191F28] leading-snug">
+        <div className="px-4 sm:px-6 pt-4 pb-3 flex items-start justify-between gap-2 shrink-0">
+          <div className="min-w-0 flex-1 pr-2">
+            <h2
+              id={titleId}
+              className="text-[18px] sm:text-[19px] font-bold text-[#191F28] leading-snug break-words [word-break:keep-all]"
+            >
               {title}
             </h2>
             {subtitle && (
-              <p className="text-[13px] text-[#8B95A1] mt-0.5">{subtitle}</p>
+              <p className="text-[13px] text-[#8B95A1] mt-0.5 break-words [word-break:keep-all]">
+                {subtitle}
+              </p>
             )}
           </div>
           <button
             type="button"
             onClick={() => dialogRef.current?.close()}
             aria-label="닫기"
-            className="w-8 h-8 rounded-full bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center active:scale-[0.97] active:bg-[#E5E8EB] transition-all duration-150 ease-out"
+            className="w-10 h-10 shrink-0 rounded-full bg-[#F2F4F6] text-[#4E5968] flex items-center justify-center active:scale-[0.97] active:bg-[#E5E8EB] transition-all duration-150 ease-out"
           >
             <X className="w-4 h-4" />
           </button>
@@ -126,7 +131,8 @@ export const TdsDialog: React.FC<TdsDialogProps> = ({
         {/* 시트 스크롤 본문 */}
         <div
           className={
-            bodyClassName ?? 'px-6 pb-7 overflow-y-auto flex-1'
+            bodyClassName ??
+            'px-4 sm:px-6 safe-area-bottom sm:pb-7 overflow-y-auto flex-1'
           }
         >
           {children}

@@ -727,12 +727,12 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
   const hasAnyReceiptEvidence = allExpenseEvidenceItems.length > 0;
 
   return (
-    <div className="space-y-5 pb-28 print-container">
+    <div className="space-y-5 pb-24 sm:pb-12 print-container">
       {/* =====================================================================
           1. 상단 컨트롤 & 3단 모드 전환 바 (@media print 시 완벽 숨김: .no-print)
          ===================================================================== */}
-      <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
           <h2 className="text-[18px] sm:text-[19px] font-bold text-[#191F28]">
             결산서 · 영수증철 인쇄
           </h2>
@@ -741,27 +741,30 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             type="button"
             disabled={isPreparingPrint}
             onClick={() => void handlePrint()}
-            className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-semibold flex items-center justify-center gap-2 shrink-0 active:scale-[0.97] transition-all duration-150 disabled:opacity-60"
+            className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-semibold flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-[0.97] transition-all duration-150 disabled:opacity-60"
           >
-            <Printer className="w-4 h-4" />
+            <Printer className="w-4 h-4 shrink-0" />
             {isPreparingPrint ? '인쇄 준비 중...' : '인쇄 / PDF 저장'}
           </button>
         </div>
 
         {/* 3단 화면 모드 전환 탭 + 상시 노출 1행2열 / 2행2열 토글 */}
-        <div className="flex flex-col gap-2.5 bg-[#F9FAFB] p-2.5 rounded-2xl">
+        <div className="flex flex-col gap-2.5 bg-[#F9FAFB] p-2 sm:p-2.5 rounded-2xl">
           <div className="bg-[#E5E8EB] p-1 rounded-xl grid grid-cols-3 gap-1">
             <button
               type="button"
               onClick={() => setScreenMode('mobile_inspector')}
-              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-[13px] font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                 screenMode === 'mobile_inspector'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <Smartphone className="w-4 h-4 shrink-0" />
-              <span className="truncate">
+              <span className="sm:hidden tabular-nums">
+                검수 ({allExpenseEvidenceItems.length})
+              </span>
+              <span className="hidden sm:inline tabular-nums">
                 영수증 검수 ({allExpenseEvidenceItems.length})
               </span>
             </button>
@@ -769,37 +772,39 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             <button
               type="button"
               onClick={() => setScreenMode('layout_board')}
-              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-[13px] font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                 screenMode === 'layout_board'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <LayoutGrid className="w-4 h-4 shrink-0" />
-              <span className="truncate">배치 편집</span>
+              <span className="sm:hidden">배치</span>
+              <span className="hidden sm:inline">배치 편집</span>
             </button>
 
             <button
               type="button"
               onClick={() => setScreenMode('a4_preview')}
-              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-[13px] font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                 screenMode === 'a4_preview'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <Eye className="w-4 h-4 shrink-0" />
-              <span className="truncate">A4 미리보기</span>
+              <span className="sm:hidden">A4 보기</span>
+              <span className="hidden sm:inline">A4 미리보기</span>
             </button>
           </div>
 
           {/* 상단 승격: 1행2열(2칸) / 2행2열(4칸) 밀도 전환 + A4 줌 토글 */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="inline-flex items-center gap-1 bg-[#FFFFFF] p-1 rounded-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="grid grid-cols-2 w-full sm:w-auto sm:inline-grid items-center gap-1 bg-[#FFFFFF] p-1 rounded-xl">
               <button
                 type="button"
                 onClick={() => handleDensityChange(2)}
-                className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                className={`min-h-9 px-3 py-1.5 rounded-lg text-[12px] font-bold whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                   density === 2
                     ? 'bg-[#191F28] text-[#FFFFFF]'
                     : 'text-[#4E5968] hover:text-[#191F28]'
@@ -810,7 +815,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleDensityChange(4)}
-                className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                className={`min-h-9 px-3 py-1.5 rounded-lg text-[12px] font-bold whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                   density === 4
                     ? 'bg-[#191F28] text-[#FFFFFF]'
                     : 'text-[#4E5968] hover:text-[#191F28]'
@@ -826,17 +831,17 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                 onClick={() =>
                   setA4ZoomMode((prev) => (prev === 'fit' ? 'actual' : 'fit'))
                 }
-                className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
+                className="w-full sm:w-auto min-h-9 px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap active:scale-[0.97] transition-all duration-150"
               >
                 {a4ZoomMode === 'fit' ? (
                   <>
-                    <Maximize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                    <span>화면 맞춤 (100% 보기)</span>
+                    <Maximize2 className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
+                    <span>화면 맞춤 · 100% 보기</span>
                   </>
                 ) : (
                   <>
-                    <Minimize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                    <span>100% 크기 (화면 맞춤)</span>
+                    <Minimize2 className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
+                    <span>100% 크기 · 화면 맞춤</span>
                   </>
                 )}
               </button>
@@ -889,19 +894,19 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
         </div>
 
         {/* 인쇄 옵션 & 결재란 상세 설정 아코디언 */}
-        <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
+        <div className="bg-[#F9FAFB] rounded-2xl p-3.5 sm:p-4 space-y-3">
           <button
             type="button"
             onClick={() => setIsConfigExpanded((prev) => !prev)}
-            className="w-full flex items-center justify-between text-left"
+            className="w-full flex items-center justify-between gap-2 text-left"
           >
-            <div className="flex items-center gap-2">
-              <SlidersHorizontal className="w-4 h-4 text-[#3182F6]" />
-              <span className="text-[13px] font-bold text-[#191F28]">
-                스캔 보정 · 미첨부 공란 · 결재선 직분 설정
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <SlidersHorizontal className="w-4 h-4 text-[#3182F6] shrink-0" />
+              <span className="text-[13px] font-bold text-[#191F28] break-words [word-break:keep-all]">
+                스캔 보정 · 미첨부 · 결재선 설정
               </span>
             </div>
-            <span className="px-2.5 py-1 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 shrink-0">
+            <span className="px-2.5 py-1 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap">
               {isConfigExpanded ? (
                 <>
                   <span>접기</span>
@@ -976,13 +981,13 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                   <span className="text-[12.5px] font-bold text-[#4E5968]">
                     결재선 직분 & 작성자 정보
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <select
                       value={accountFilter}
                       onChange={(e) =>
                         onAccountFilterChange(e.target.value as AccountType)
                       }
-                      className="h-8 px-3 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#191F28] focus:outline-none"
+                      className="h-9 px-3 rounded-xl bg-[#FFFFFF] text-[12px] font-semibold text-[#191F28] focus:outline-none max-w-full"
                     >
                       <option value="all">계정: 전체 통합</option>
                       <option value="general">계정: 일반회계(운영비)</option>
@@ -993,7 +998,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                     <button
                       type="button"
                       onClick={toggleApprovalBox}
-                      className={`px-3 py-1 rounded-xl text-[12px] font-semibold transition-all duration-150 active:scale-[0.97] ${
+                      className={`h-9 px-3 rounded-xl text-[12px] font-semibold whitespace-nowrap transition-all duration-150 active:scale-[0.97] ${
                         settings.showApprovalBox
                           ? 'bg-[#E8F3FF] text-[#1B64DA]'
                           : 'bg-[#E5E8EB] text-[#4E5968]'
@@ -1063,22 +1068,22 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
       {screenMode === 'mobile_inspector' && (
         <div className="no-print max-w-[980px] mx-auto space-y-4">
           {/* 1. 월간 결산 요약 & 증빙 첨부율 카드 */}
-          <section className="bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
+          <section className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0 flex-1">
                 <span className="text-[12px] font-bold text-[#3182F6]">
                   {yearMonthTitle} · {ACCOUNT_LABELS[accountFilter]} 결산 요약
                 </span>
-                <div className="text-[24px] sm:text-[28px] font-bold text-[#191F28] tabular-nums tracking-tight mt-0.5">
+                <div className="text-[22px] sm:text-[28px] font-bold text-[#191F28] tabular-nums tracking-tight mt-0.5">
                   잔액 {formatWon(currentBalance)}
                 </div>
-                <div className="text-[12.5px] font-medium text-[#4E5968] tabular-nums mt-0.5">
+                <div className="text-[12.5px] font-medium text-[#4E5968] tabular-nums mt-0.5 break-words [word-break:keep-all]">
                   {numberToKoreanCurrency(currentBalance)}
                 </div>
               </div>
 
               <div
-                className={`px-3 py-1.5 rounded-2xl text-[12px] font-bold tabular-nums shrink-0 ${
+                className={`px-3 py-1.5 rounded-2xl text-[12px] font-bold tabular-nums shrink-0 whitespace-nowrap ${
                   missingReceiptCount === 0
                     ? 'bg-[#E8F3FF] text-[#1B64DA]'
                     : 'bg-[#FFEEF0] text-[#F04452]'
@@ -1086,33 +1091,33 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               >
                 {missingReceiptCount === 0
                   ? `증빙 ${allExpenseEvidenceItems.length}건 완료`
-                  : `영수증 미첨부 ${missingReceiptCount}건`}
+                  : `미첨부 ${missingReceiptCount}건`}
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-2 tabular-nums">
-              <div className="bg-[#F9FAFB] rounded-2xl p-3">
+              <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3 min-w-0">
                 <div className="text-[11px] text-[#8B95A1]">전월 이월</div>
-                <div className="text-[13.5px] font-bold text-[#4E5968] mt-0.5">
+                <div className="text-[12px] sm:text-[13.5px] font-bold text-[#4E5968] tracking-tight whitespace-nowrap truncate mt-0.5">
                   {formatWon(carryoverAmount)}
                 </div>
               </div>
-              <div className="bg-[#F9FAFB] rounded-2xl p-3">
+              <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3 min-w-0">
                 <div className="text-[11px] text-[#8B95A1]">금월 수입</div>
-                <div className="text-[13.5px] font-bold text-[#3182F6] mt-0.5">
+                <div className="text-[12px] sm:text-[13.5px] font-bold text-[#3182F6] tracking-tight whitespace-nowrap truncate mt-0.5">
                   +{formatWon(monthlyIncome)}
                 </div>
               </div>
-              <div className="bg-[#F9FAFB] rounded-2xl p-3">
+              <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3 min-w-0">
                 <div className="text-[11px] text-[#8B95A1]">금월 지출</div>
-                <div className="text-[13.5px] font-bold text-[#191F28] mt-0.5">
+                <div className="text-[12px] sm:text-[13.5px] font-bold text-[#191F28] tracking-tight whitespace-nowrap truncate mt-0.5">
                   -{formatWon(monthlyExpense)}
                 </div>
               </div>
             </div>
 
             {/* 증빙 필터 탭 */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
               {[
                 {
                   id: 'all',
@@ -1183,7 +1188,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                 return (
                   <div
                     key={tx.id}
-                    className="bg-[#FFFFFF] rounded-3xl p-5 flex flex-col justify-between space-y-3.5"
+                    className="bg-[#FFFFFF] rounded-3xl p-4 sm:p-5 flex flex-col justify-between space-y-3.5"
                   >
                     {/* 상단 헤더 */}
                     <div className="flex items-start justify-between gap-2">
@@ -1255,9 +1260,9 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                             }`}
                           />
 
-                          <div className="w-full flex items-center justify-between gap-2 pt-1">
-                            <label className="flex-1 h-9 px-3 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.97]">
-                              <Camera className="w-3.5 h-3.5 text-[#3182F6]" />
+                          <div className="w-full flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <label className="flex-1 min-w-[100px] h-9 px-3 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer active:scale-[0.97]">
+                              <Camera className="w-3.5 h-3.5 text-[#3182F6] shrink-0" />
                               <span>
                                 {isUploading ? '저장 중...' : '사진 교체'}
                               </span>
@@ -1282,22 +1287,22 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                   isSplit ? 'place' : 'cut'
                                 )
                               }
-                              className={`h-9 px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1 active:scale-[0.97] ${
+                              className={`h-9 px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97] ${
                                 isSplit || isLong
                                   ? 'bg-[#3182F6] text-[#FFFFFF]'
                                   : 'bg-[#FFFFFF] text-[#191F28]'
                               }`}
                             >
-                              <Scissors className="w-3.5 h-3.5" />
+                              <Scissors className="w-3.5 h-3.5 shrink-0" />
                               <span>{isSplit ? '분할 수정' : '분할'}</span>
                             </button>
 
                             <button
                               type="button"
                               onClick={() => onSelectTransaction(tx)}
-                              className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center justify-center gap-1 active:scale-[0.97]"
+                              className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap shrink-0 active:scale-[0.97]"
                             >
-                              <Edit3 className="w-3.5 h-3.5" />
+                              <Edit3 className="w-3.5 h-3.5 shrink-0" />
                               <span>상세</span>
                             </button>
                           </div>
@@ -1360,13 +1365,14 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             </div>
           )}
 
-          {/* 모바일 하단 고정 미리보기/인쇄 바 */}
-          <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-3">
+          {/* 모바일 하단 고정 미리보기/인쇄 바 (하단 카드 가림 방지 여백 포함) */}
+          <div className="h-4 sm:hidden" aria-hidden="true" />
+          <div className="sticky sticky-bottom-safe z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-2.5 shadow-lg">
             <div className="min-w-0">
-              <div className="text-[11px] text-[#8B95A1]">
+              <div className="text-[11px] text-[#8B95A1] truncate">
                 장부 1장 + 영수증철 {receiptPageCount}장
               </div>
-              <div className="text-[14.5px] font-bold tabular-nums truncate">
+              <div className="text-[14px] sm:text-[14.5px] font-bold tabular-nums truncate">
                 증빙 {attachedReceiptCount}/{allExpenseEvidenceItems.length}건 첨부
               </div>
             </div>
@@ -1375,18 +1381,18 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               <button
                 type="button"
                 onClick={() => setScreenMode('layout_board')}
-                className="h-10 px-3 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97]"
+                className="h-10 px-3 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97]"
               >
-                <LayoutGrid className="w-4 h-4" />
+                <LayoutGrid className="w-4 h-4 shrink-0" />
                 <span>배치</span>
               </button>
               <button
                 type="button"
                 disabled={isPreparingPrint}
                 onClick={() => void handlePrint()}
-                className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 active:scale-[0.97] disabled:opacity-60"
+                className="h-10 px-3.5 sm:px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 whitespace-nowrap active:scale-[0.97] disabled:opacity-60"
               >
-                <Printer className="w-4 h-4" />
+                <Printer className="w-4 h-4 shrink-0" />
                 <span>{isPreparingPrint ? '준비 중' : '인쇄/PDF'}</span>
               </button>
             </div>
@@ -1423,8 +1429,17 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
          ===================================================================== */}
       <div
         ref={printAreaRef}
+        role={screenMode === 'a4_preview' ? 'region' : undefined}
+        tabIndex={
+          screenMode === 'a4_preview' && a4ZoomMode === 'actual' ? 0 : undefined
+        }
+        aria-label={screenMode === 'a4_preview' ? 'A4 미리보기' : undefined}
         className={`max-w-[980px] mx-auto space-y-6 print-force-show ${
-          screenMode === 'a4_preview' ? 'block' : 'hidden'
+          screenMode === 'a4_preview'
+            ? a4ZoomMode === 'actual'
+              ? 'block overflow-x-auto max-w-full print:overflow-visible'
+              : 'block'
+            : 'hidden'
         }`}
       >
         {/* 문서 1: 월별 회계 결산 보고서 (다중 페이지 자연 분할 지원) */}
@@ -1888,7 +1903,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                     onClick={() =>
                                       handleOpenSplitEditor(tx, 'place')
                                     }
-                                    className="no-print absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#191F28]/80 text-[#FFFFFF] text-[10.5px] font-semibold flex items-center gap-1 hover:bg-[#191F28] active:scale-[0.97]"
+                                    className="no-print hidden sm:flex absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#191F28]/80 text-[#FFFFFF] text-[10.5px] font-semibold items-center gap-1 hover:bg-[#191F28] active:scale-[0.97]"
                                   >
                                     <Scissors className="w-3 h-3" />
                                     <span>배치 수정</span>
@@ -1966,7 +1981,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                         onClick={() =>
                                           handleOpenSplitEditor(tx, 'cut')
                                         }
-                                        className="no-print absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[10.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                                        className="no-print hidden sm:flex absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[10.5px] font-bold items-center gap-1 active:scale-[0.97]"
                                       >
                                         <Scissors className="w-3 h-3" />
                                         <span>긴 영수증 · 분할</span>

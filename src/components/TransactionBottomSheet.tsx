@@ -494,6 +494,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           : undefined
       }
       variant="bottom-sheet"
+      bodyClassName="px-4 sm:px-6 pb-0 overflow-y-auto flex-1"
     >
       <form onSubmit={handleSubmit} className="space-y-5 pt-1">
         {/* =================================================================
@@ -707,11 +708,11 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             2. 금액 입력 영역
            ================================================================= */}
         <div className="bg-[#F9FAFB] rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-[13px] font-bold text-[#4E5968]">
-              {type === 'income' ? '💰 입금 / 수입 금액' : '💸 결제 / 지출 금액'}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <label className="text-[13px] font-bold text-[#4E5968] whitespace-nowrap">
+              {type === 'income' ? '입금 / 수입 금액' : '결제 / 지출 금액'}
             </label>
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {(type === 'income'
                 ? [50000, 100000, 500000, 1000000]
                 : [10000, 50000, 100000]
@@ -720,7 +721,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                   key={unit}
                   type="button"
                   onClick={() => handleQuickAddAmount(unit)}
-                  className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold tabular-nums active:scale-[0.97] transition-all duration-150"
+                  className="px-2.5 py-1 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold tabular-nums whitespace-nowrap shrink-0 active:scale-[0.97] transition-all duration-150"
                 >
                   +{unit >= 10000 ? `${unit / 10000}만` : unit}
                 </button>
@@ -760,7 +761,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             <select
               value={account}
               onChange={(e) => setAccount(e.target.value as LedgerAccount)}
-              className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] focus:outline-none focus:bg-[#F2F4F6]"
+              className="w-full h-11 px-3.5 py-2 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] leading-tight focus:outline-none focus:bg-[#F2F4F6]"
             >
               <option value="general">{ACCOUNT_LABELS.general}</option>
               <option value="retreat">{ACCOUNT_LABELS.retreat}</option>
@@ -776,7 +777,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] tabular-nums focus:outline-none focus:bg-[#F2F4F6]"
+              className="w-full h-11 px-3.5 py-2 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] tabular-nums focus:outline-none focus:bg-[#F2F4F6]"
             />
           </div>
 
@@ -789,7 +790,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               onChange={(e) =>
                 setPaymentMethod(e.target.value as PaymentMethod)
               }
-              className="w-full h-11 px-3.5 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] focus:outline-none focus:bg-[#F2F4F6]"
+              className="w-full h-11 px-3.5 py-2 rounded-2xl bg-[#F9FAFB] text-[14px] font-medium text-[#191F28] leading-tight focus:outline-none focus:bg-[#F2F4F6]"
             >
               {PAYMENT_METHODS.map((pm) => (
                 <option key={pm} value={pm}>
@@ -1028,8 +1029,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             </div>
 
             {mokjangId && (
-              <div className="pt-1 flex items-center gap-2">
-                <span className="text-[12.5px] font-semibold text-[#4E5968]">
+              <div className="pt-1 flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-semibold text-[#4E5968] shrink-0">
                   구분:
                 </span>
                 {(['visitation', 'fellowship'] as const).map((sub) => (
@@ -1130,8 +1131,8 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
           </div>
         )}
 
-        {/* 하단 저장 / 삭제 액션 바 */}
-        <div className="pt-2 flex items-center gap-2.5">
+        {/* 하단 저장 / 삭제 고정 액션 바 */}
+        <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] bg-[#FFFFFF]/95 backdrop-blur border-t border-[#F2F4F6] flex items-center gap-2.5">
           {initialTransaction && onDelete && (
             <button
               type="button"
@@ -1139,10 +1140,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                 onDelete(initialTransaction.id);
                 onClose();
               }}
-              className="h-13 px-4 rounded-2xl bg-[#FFEEF0] text-[#F04452] font-semibold text-[14px] flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all duration-150 ease-out"
+              className="h-12 sm:h-13 px-4 rounded-2xl bg-[#FFEEF0] text-[#F04452] font-semibold text-[14px] flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ease-out"
             >
-              <Trash2 className="w-4 h-4" />
-              삭제
+              <Trash2 className="w-4 h-4 shrink-0" />
+              <span>삭제</span>
             </button>
           )}
 
@@ -1150,7 +1151,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             ref={submitBtnRef}
             type="submit"
             disabled={isCompressing || isAnalyzingAi}
-            className="flex-1 h-13 rounded-2xl bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] font-semibold text-[16px] flex items-center justify-center gap-2 active:scale-[0.97] transition-all duration-150 ease-out focus:ring-4 focus:ring-[#3182F6]/30"
+            className="flex-1 h-12 sm:h-13 rounded-2xl bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] font-semibold text-[15.5px] sm:text-[16px] flex items-center justify-center gap-2 whitespace-nowrap active:scale-[0.97] transition-all duration-150 ease-out focus:ring-4 focus:ring-[#3182F6]/30"
           >
             {initialTransaction
               ? '저장하기'
