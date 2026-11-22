@@ -45,6 +45,7 @@ const RECEIPT_FOLDER_NAME = '영수증_증빙';
 const DEFAULT_SPREADSHEET_TITLE = '청년부 회계장부 (통합백업)';
 const DRIVE_THUMBNAIL_WIDTH_PX = 2000;
 const RECEIPT_LAYOUT_SETTING_PREFIX = 'receiptLayout:';
+const SILENT_RECONNECT_TIMEOUT_MS = 3500;
 
 const SHEET_NAMES = {
   LEDGER: '장부내역',
@@ -70,6 +71,7 @@ export interface GoogleWorkspaceInfo {
   spreadsheetUrl: string;
   createdNewSpreadsheet: boolean;
   hasExistingData: boolean;
+  remoteModifiedTime?: string;
 }
 
 interface GoogleTokenResponse {
@@ -84,10 +86,14 @@ interface GoogleAccountsOAuth2 {
     client_id: string;
     scope: string;
     prompt?: string;
+    hint?: string;
     callback: (resp: GoogleTokenResponse) => void;
     error_callback?: (err: { type?: string; message?: string }) => void;
   }) => {
-    requestAccessToken: (overrideConfig?: { prompt?: string }) => void;
+    requestAccessToken: (overrideConfig?: {
+      prompt?: string;
+      hint?: string;
+    }) => void;
   };
   revoke: (token: string, done?: () => void) => void;
 }
@@ -190,12 +196,14 @@ async function ensureGsiLoaded(): Promise<GoogleAccountsOAuth2> {
  */
 export async function signInWithGoogle(
   clientId: string,
-  prompt: '' | 'select_account' | 'consent' = 'select_account'
+  prompt: '' | 'select_account' | 'consent' = 'select_account',
+  loginHint?: string
 ): Promise<GoogleSession> {
   const cleanId = clientId.trim();
   if (!cleanId) {
     throw new Error('먼저 Google OAuth 클라이언트 ID를 입력해 주세요.');
   }
+  const cleanHint = loginHint?.trim() || undefined;
 
   const oauth2 = await ensureGsiLoaded();
 
@@ -203,6 +211,7 @@ export async function signInWithGoogle(
     const client = oauth2.initTokenClient({
       client_id: cleanId,
       scope: GOOGLE_SCOPES,
+      ...(cleanHint ? { hint: cleanHint } : {}),
       callback: (resp) => {
         if (resp.error || !resp.access_token) {
           reject(
@@ -226,7 +235,10 @@ export async function signInWithGoogle(
       },
     });
 
-    client.requestAccessToken({ prompt });
+    client.requestAccessToken({
+      prompt,
+      ...(cleanHint ? { hint: cleanHint } : {}),
+    });
   });
 
   const accessToken = tokenResp.access_token!;
@@ -251,6 +263,69 @@ export async function signInWithGoogle(
 
   saveGoogleSession(session);
   return session;
+}
+
+/**
+ * 이전에 연결된 계정 힌트(loginHint)로 무팝업(prompt: '') 세션 복구를 시도합니다.
+ * 팝업 승인 필요·차단·타임아웃(3500ms) 시 예외를 던지지 않고 null을 반환합니다.
+ */
+export async function trySilentGoogleReconnect(
+  clientId: string,
+  loginHint: string
+): Promise<GoogleSession | null> {
+  const cleanId = clientId.trim();
+  const cleanHint = loginHint.trim();
+  if (!cleanId || !cleanHint) return null;
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timeoutId = setTimeout(() => resolve(null), SILENT_RECONNECT_TIMEOUT_MS);
+    });
+    const session = await Promise.race([
+      signInWithGoogle(cleanId, '', cleanHint).catch(() => null),
+      timeoutPromise,
+    ]);
+    return session;
+  } catch {
+    return null;
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+/**
+ * 구글 드라이브 스프레드시트의 최종 수정 시각(modifiedTime)과 휴지통 여부를 초경량 조회합니다.
+ * (다른 기기 변경 감지 및 충돌 판단용)
+ */
+export async function getSpreadsheetModifiedTime(
+  accessToken: string,
+  spreadsheetId: string
+): Promise<{ modifiedTime: string | null; trashed: boolean }> {
+  const cleanId = spreadsheetId.trim();
+  if (!cleanId) return { modifiedTime: null, trashed: false };
+
+  const res = await googleApiFetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+      cleanId
+    )}?fields=modifiedTime,trashed`,
+    accessToken
+  );
+
+  if (!res.ok) {
+    return { modifiedTime: null, trashed: false };
+  }
+
+  const info = await res.json();
+  return {
+    modifiedTime:
+      typeof info.modifiedTime === 'string' && info.modifiedTime
+        ? info.modifiedTime
+        : null,
+    trashed: Boolean(info.trashed),
+  };
 }
 
 async function googleApiFetch(
@@ -400,12 +475,13 @@ export async function ensureGoogleWorkspace(
 
   let spreadsheetId = '';
   let spreadsheetUrl = '';
+  let remoteModifiedTime: string | undefined;
   let createdNewSpreadsheet = false;
 
   // 1) 기존에 저장된 spreadsheetId 유효성 확인
   if (existingSpreadsheetId?.trim()) {
     const checkRes = await googleApiFetch(
-      `https://www.googleapis.com/drive/v3/files/${existingSpreadsheetId.trim()}?fields=id,trashed,webViewLink`,
+      `https://www.googleapis.com/drive/v3/files/${existingSpreadsheetId.trim()}?fields=id,trashed,webViewLink,modifiedTime`,
       accessToken
     );
     if (checkRes.ok) {
@@ -415,6 +491,9 @@ export async function ensureGoogleWorkspace(
         spreadsheetUrl =
           info.webViewLink ||
           `https://docs.google.com/spreadsheets/d/${info.id}/edit`;
+        if (typeof info.modifiedTime === 'string' && info.modifiedTime) {
+          remoteModifiedTime = info.modifiedTime;
+        }
       }
     }
   }
@@ -425,7 +504,7 @@ export async function ensureGoogleWorkspace(
     const listRes = await googleApiFetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
         q
-      )}&fields=files(id,name,webViewLink)&orderBy=modifiedTime desc`,
+      )}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc`,
       accessToken
     );
     if (listRes.ok) {
@@ -436,6 +515,9 @@ export async function ensureGoogleWorkspace(
         spreadsheetUrl =
           f.webViewLink ||
           `https://docs.google.com/spreadsheets/d/${f.id}/edit`;
+        if (typeof f.modifiedTime === 'string' && f.modifiedTime) {
+          remoteModifiedTime = f.modifiedTime;
+        }
       }
     }
   }
@@ -550,6 +632,17 @@ export async function ensureGoogleWorkspace(
     }
   }
 
+  if (!remoteModifiedTime && spreadsheetId) {
+    try {
+      const meta = await getSpreadsheetModifiedTime(accessToken, spreadsheetId);
+      if (meta.modifiedTime) {
+        remoteModifiedTime = meta.modifiedTime;
+      }
+    } catch {
+      // 수정 시각 조회 실패 시 무시
+    }
+  }
+
   return {
     rootFolderId: rootFolder.id,
     receiptFolderId: receiptFolder.id,
@@ -558,6 +651,7 @@ export async function ensureGoogleWorkspace(
     spreadsheetUrl,
     createdNewSpreadsheet,
     hasExistingData,
+    remoteModifiedTime,
   };
 }
 
@@ -732,6 +826,7 @@ export async function pushAllToGoogleSheets(
 ): Promise<{
   updatedTransactions: Transaction[];
   syncedAt: string;
+  remoteModifiedTime?: string;
 }> {
   await ensureAllSheetTabs(accessToken, spreadsheetId);
 
@@ -1001,9 +1096,20 @@ export async function pushAllToGoogleSheets(
     );
   }
 
+  let remoteModifiedTime: string | undefined;
+  try {
+    const meta = await getSpreadsheetModifiedTime(accessToken, spreadsheetId);
+    if (meta.modifiedTime) {
+      remoteModifiedTime = meta.modifiedTime;
+    }
+  } catch {
+    // 수정 시각 조회 실패 시 syncedAt으로 폴백 가능하도록 undefined 유지
+  }
+
   return {
     updatedTransactions: uploadedTransactions,
     syncedAt: now,
+    remoteModifiedTime,
   };
 }
 
@@ -1020,6 +1126,7 @@ export async function pullAllFromGoogleSheets(
   budgets: BudgetsMap;
   settings: AppSettings;
   receiptLayouts: ReceiptBookLayoutsMap;
+  remoteModifiedTime?: string;
 }> {
   await ensureAllSheetTabs(accessToken, spreadsheetId);
 
@@ -1031,16 +1138,24 @@ export async function pullAllFromGoogleSheets(
     `${SHEET_NAMES.SETTINGS}!A1:C`,
   ];
 
-  const res = await googleApiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${ranges
-      .map((r) => `ranges=${encodeURIComponent(r)}`)
-      .join('&')}`,
-    accessToken
-  );
+  const [res, remoteMeta] = await Promise.all([
+    googleApiFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${ranges
+        .map((r) => `ranges=${encodeURIComponent(r)}`)
+        .join('&')}`,
+      accessToken
+    ),
+    getSpreadsheetModifiedTime(accessToken, spreadsheetId).catch(() => ({
+      modifiedTime: null,
+      trashed: false,
+    })),
+  ]);
 
   if (!res.ok) {
     throw new Error(`구글 시트 데이터 불러오기 실패 (${res.status})`);
   }
+
+  const remoteModifiedTime = remoteMeta.modifiedTime || undefined;
 
   const data = await res.json();
   const valueRanges = data.valueRanges || [];
@@ -1246,7 +1361,11 @@ export async function pullAllFromGoogleSheets(
     settings: {
       ...nextSettings,
       lastSyncedAt: new Date().toISOString(),
+      ...(remoteModifiedTime
+        ? { lastCloudModifiedTime: remoteModifiedTime }
+        : {}),
     },
     receiptLayouts,
+    remoteModifiedTime,
   };
 }

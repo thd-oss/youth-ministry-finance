@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Rocket,
   RotateCcw,
+  Smartphone,
   Sparkles,
   Upload,
 } from 'lucide-react';
@@ -62,6 +63,8 @@ interface SyncSettingsModalProps {
     session: GoogleSession;
     workspace: GoogleWorkspaceInfo;
     autoBackedUp: boolean;
+    autoHydrated?: boolean;
+    conflictPending?: boolean;
   }>;
   onGooglePushAll: () => Promise<void>;
   onGooglePullAll: () => Promise<{
@@ -117,6 +120,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   const [showAdvancedFileBackup, setShowAdvancedFileBackup] =
     useState<boolean>(false);
   const [copiedOrigin, setCopiedOrigin] = useState<boolean>(false);
+  const [copiedDeviceLink, setCopiedDeviceLink] = useState<boolean>(false);
 
   const [geminiKeyInput, setGeminiKeyInput] = useState<string>(
     settings.geminiApiKey || ''
@@ -177,6 +181,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
       setDeptInput(settings.departmentName || '은혜교회 청년부');
       setAuthorInput(settings.authorName || '김송연');
       setConfirmResetStep(false);
+      setCopiedDeviceLink(false);
       setFeedback(null);
     } else if (!open && wasOpenRef.current) {
       wasOpenRef.current = false;
@@ -229,15 +234,26 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     });
     try {
       const res = await onGoogleSignIn(targetClientId);
-      if (res.autoBackedUp) {
+      if (res.conflictPending) {
+        setFeedback({
+          tone: 'info',
+          message: `[${res.session.email}] 연결 완료! 드라이브와 이 기기 모두 작업 내역이 있어 선택 창을 열었습니다.`,
+        });
+        onClose();
+      } else if (res.autoHydrated) {
         setFeedback({
           tone: 'success',
-          message: `[${res.session.email}] 연결 완료! 구글 드라이브에 시트(5개 탭)와 영수증 폴더를 자동 생성하고 전체 데이터를 백업했습니다.`,
+          message: `[${res.session.email}] 연결 완료! 구글 드라이브에 저장된 작업을 자동으로 불러왔습니다.`,
+        });
+      } else if (res.autoBackedUp) {
+        setFeedback({
+          tone: 'success',
+          message: `[${res.session.email}] 연결 완료! 구글 드라이브에 시트와 영수증 폴더를 생성하고 전체 데이터를 백업했습니다.`,
         });
       } else {
         setFeedback({
           tone: 'success',
-          message: `[${res.session.email}] 연결 완료! 기존 구글 시트를 찾았습니다. [시트에서 불러오기] 또는 [시트로 지금 백업]을 선택해 주세요.`,
+          message: `[${res.session.email}] 연결 완료! 기존 구글 시트를 찾았습니다.`,
         });
       }
     } catch (e) {
@@ -486,6 +502,16 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
     settings.geminiModel === geminiModelInput;
 
   const hasLinkedSheet = Boolean(settings.googleSpreadsheetUrl);
+  const effectiveClientId = clientIdInput.trim() || BUILTIN_GOOGLE_CLIENT_ID;
+  const currentPathname =
+    typeof window !== 'undefined' && window.location.pathname
+      ? window.location.pathname
+      : '/';
+  const multiDeviceShareUrl = effectiveClientId
+    ? !BUILTIN_GOOGLE_CLIENT_ID
+      ? `${currentOrigin}${currentPathname}?gclient=${encodeURIComponent(effectiveClientId)}`
+      : `${currentOrigin}${currentPathname}`
+    : '';
 
   return (
     <TdsDialog open={open} onClose={onClose} title="설정" variant="modal">
@@ -733,6 +759,49 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                   )}
                   <span>Google 계정으로 로그인 · 시트 자동 생성</span>
                 </button>
+              )}
+
+              {/* 멀티 디바이스 이어쓰기 보조 영역 */}
+              {Boolean(effectiveClientId) && (
+                <div className="bg-[#FFFFFF] rounded-2xl p-4 space-y-2.5 border border-[#E5E8EB]">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-[#E8F3FF] text-[#3182F6] flex items-center justify-center shrink-0">
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div className="text-[13.5px] font-bold text-[#191F28]">
+                      다른 기기에서 바로 이어쓰기
+                    </div>
+                  </div>
+                  <p className="text-[12px] text-[#4E5968] leading-relaxed break-words [word-break:keep-all]">
+                    폰·태블릿·다른 PC에서 같은 구글 계정으로 로그인하면 장부·목장·3차 예산안·영수증을 바로 이어서 작업합니다.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleCopyText(multiDeviceShareUrl, () => {
+                        setCopiedDeviceLink(true);
+                        setTimeout(() => setCopiedDeviceLink(false), 2000);
+                      })
+                    }
+                    className={`w-full h-10 px-3.5 rounded-xl text-[12.5px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-all ${
+                      copiedDeviceLink
+                        ? 'bg-[#E8F3FF] text-[#1B64DA]'
+                        : 'bg-[#F2F4F6] text-[#191F28] hover:bg-[#E5E8EB]'
+                    }`}
+                  >
+                    {copiedDeviceLink ? (
+                      <>
+                        <Check className="w-4 h-4 text-[#3182F6]" />
+                        <span>복사됨</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-[#3182F6]" />
+                        <span>다른 기기 연결 주소 복사</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
 
               {/* OAuth 클라이언트 ID 입력 (내장 ID가 없거나 직접 변경할 때) */}

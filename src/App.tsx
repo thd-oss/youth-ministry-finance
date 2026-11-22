@@ -6,8 +6,11 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Cloud,
   ExternalLink,
+  LogIn,
   Printer,
+  RefreshCw,
   Settings,
   Sparkles,
   Users,
@@ -31,18 +34,22 @@ import {
 import {
   clearGoogleSession,
   ensureGoogleWorkspace,
+  getEffectiveGoogleClientId,
+  getSpreadsheetModifiedTime,
   GoogleSession,
   GoogleWorkspaceInfo,
   loadGoogleSession,
   pullAllFromGoogleSheets,
   pushAllToGoogleSheets,
   signInWithGoogle,
+  trySilentGoogleReconnect,
 } from './utils/googleDirectSync';
 import { formatYearMonthKorean } from './utils/koreanCurrency';
 import {
   BudgetsMap,
   computeMonthlyLedger,
   deriveDynamicFiscalSchema,
+  enrichAllTransactionsWithEvidence,
   SyncManager,
 } from './utils/syncManager';
 import { BudgetBuilderView } from './components/BudgetBuilderView';
@@ -53,6 +60,7 @@ import {
   SettingsTabType,
   SyncSettingsModal,
 } from './components/SyncSettingsModal';
+import { TdsDialog } from './components/TdsDialog';
 import { TransactionBottomSheet } from './components/TransactionBottomSheet';
 
 const AVAILABLE_MONTHS = [
@@ -63,6 +71,57 @@ const AVAILABLE_MONTHS = [
   '2027-01',
   '2027-02',
 ];
+
+const AUTO_SYNC_DEBOUNCE_MS = 2000;
+const VISIBILITY_PULL_THROTTLE_MS = 15_000;
+const SYNC_TOAST_DURATION_MS = 3500;
+const URL_PARAM_TOAST_DURATION_MS = 5500;
+const GOOGLE_CLIENT_ID_SUFFIX = '.apps.googleusercontent.com';
+
+interface PendingCloudConflict {
+  session: GoogleSession;
+  workspace: GoogleWorkspaceInfo;
+  nextSettings: AppSettings;
+  remoteModifiedTime?: string;
+}
+
+interface SyncToastMessage {
+  text: string;
+  tone: 'info' | 'warning';
+}
+
+function parseIsoTimestampMs(iso?: string | null): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isSameCloudTimestamp(
+  remoteIso?: string | null,
+  localIso?: string | null
+): boolean {
+  if (!remoteIso || !localIso) return false;
+  const remoteMs = parseIsoTimestampMs(remoteIso);
+  const localMs = parseIsoTimestampMs(localIso);
+  if (remoteMs !== null && localMs !== null) {
+    return remoteMs === localMs;
+  }
+  return remoteIso === localIso;
+}
+
+function isRemoteTimestampNewer(
+  remoteIso?: string | null,
+  localIso?: string | null
+): boolean {
+  if (!remoteIso) return false;
+  if (!localIso) return true;
+  const remoteMs = parseIsoTimestampMs(remoteIso);
+  const localMs = parseIsoTimestampMs(localIso);
+  if (remoteMs !== null && localMs !== null) {
+    return remoteMs > localMs;
+  }
+  return remoteIso !== localIso;
+}
 
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveViewMode>('ledger');
@@ -81,6 +140,9 @@ export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(() =>
     SyncManager.loadSettings()
   );
+  const settingsRef = useRef<AppSettings>(settings);
+  settingsRef.current = settings;
+
   const [receiptLayouts, setReceiptLayouts] = useState<ReceiptBookLayoutsMap>(
     () => SyncManager.loadReceiptLayouts()
   );
@@ -88,6 +150,17 @@ export const App: React.FC = () => {
   receiptLayoutsRef.current = receiptLayouts;
 
   const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(false);
+  const [syncToast, setSyncToast] = useState<SyncToastMessage | null>(null);
+  const syncToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [pendingCloudConflict, setPendingCloudConflict] =
+    useState<PendingCloudConflict | null>(null);
+  const pendingCloudConflictRef = useRef<PendingCloudConflict | null>(
+    pendingCloudConflict
+  );
+  pendingCloudConflictRef.current = pendingCloudConflict;
+  const [isResolvingConflict, setIsResolvingConflict] =
+    useState<boolean>(false);
 
   const [googleSession, setGoogleSession] = useState<GoogleSession | null>(() =>
     loadGoogleSession()
@@ -101,13 +174,45 @@ export const App: React.FC = () => {
     return 'local';
   });
 
-  // 자동 백업 트리거용 수정 리비전 카운터 (시트에서 불러오기/드라이브 URL 반영 시에는 증가시키지 않음)
+  // 자동 백업 트리거 및 미저장 변경 추적용 리비전 카운터 (Pull/드라이브 URL 반영 시에는 증가시키지 않음)
   const [dataRevision, setDataRevision] = useState<number>(0);
+  const dataRevisionRef = useRef<number>(0);
+  const lastSyncedRevisionRef = useRef<number>(0);
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPushingGoogleRef = useRef<boolean>(false);
+  const isPullingGoogleRef = useRef<boolean>(false);
+  const lastVisibilityCheckAtRef = useRef<number>(0);
+
+  const showSyncToast = useCallback(
+    (
+      text: string,
+      tone: 'info' | 'warning' = 'info',
+      durationMs = SYNC_TOAST_DURATION_MS
+    ) => {
+      if (syncToastTimerRef.current) {
+        clearTimeout(syncToastTimerRef.current);
+      }
+      setSyncToast({ text, tone });
+      syncToastTimerRef.current = setTimeout(() => {
+        setSyncToast(null);
+        syncToastTimerRef.current = null;
+      }, durationMs);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (syncToastTimerRef.current) {
+        clearTimeout(syncToastTimerRef.current);
+      }
+    };
+  }, []);
 
   const bumpDataRevision = useCallback(() => {
-    setDataRevision((r) => r + 1);
+    const next = dataRevisionRef.current + 1;
+    dataRevisionRef.current = next;
+    setDataRevision(next);
   }, []);
 
   // 바텀시트 및 설정 모달 상태
@@ -320,7 +425,61 @@ export const App: React.FC = () => {
   );
 
   /**
-   * Google OAuth 로그인 + 드라이브 통합 폴더/영수증 폴더/5개 시트 스프레드시트 자동 생성·연결
+   * 구글 시트에서 전체 데이터를 내려받아 로컬 상태와 저장소에 원자적으로 반영합니다.
+   */
+  const applyCloudPull = useCallback(
+    async (
+      accessToken: string,
+      spreadsheetId: string,
+      baseSettings: AppSettings
+    ) => {
+      if (isPullingGoogleRef.current) return null;
+      isPullingGoogleRef.current = true;
+      setSyncStatus('syncing');
+      try {
+        const pulled = await pullAllFromGoogleSheets(
+          accessToken,
+          spreadsheetId,
+          baseSettings
+        );
+        setTransactions(pulled.transactions);
+        const savedTx = SyncManager.saveTransactions(pulled.transactions);
+        setMokjangs(pulled.mokjangs);
+        SyncManager.saveMokjangs(pulled.mokjangs);
+        setBudgets(pulled.budgets);
+        SyncManager.saveBudgets(pulled.budgets);
+        setSettings(pulled.settings);
+        settingsRef.current = pulled.settings;
+        SyncManager.saveSettings(pulled.settings);
+        setReceiptLayouts(pulled.receiptLayouts);
+        receiptLayoutsRef.current = pulled.receiptLayouts;
+        const savedLayouts = SyncManager.saveReceiptLayouts(
+          pulled.receiptLayouts
+        );
+        setStorageQuotaWarning(!savedTx || !savedLayouts);
+        lastSyncedRevisionRef.current = dataRevisionRef.current;
+        setSyncStatus('synced');
+        return {
+          transactionCount: pulled.transactions.length,
+          mokjangCount: pulled.mokjangs.length,
+          annualBudgetCount: pulled.budgets.annual_budget.items.length,
+          retreatBudgetCount: pulled.budgets.retreat_claim.items.length,
+          remoteModifiedTime: pulled.remoteModifiedTime,
+        };
+      } catch (err) {
+        const refreshed = loadGoogleSession();
+        if (!refreshed) setGoogleSession(null);
+        setSyncStatus('error');
+        throw err;
+      } finally {
+        isPullingGoogleRef.current = false;
+      }
+    },
+    []
+  );
+
+  /**
+   * Google OAuth 로그인 + 드라이브 통합 폴더/영수증 폴더/5개 시트 자동 연결 + 스마트 이어받기/충돌 보호
    */
   const handleGoogleSignIn = async (
     clientId: string
@@ -328,16 +487,23 @@ export const App: React.FC = () => {
     session: GoogleSession;
     workspace: GoogleWorkspaceInfo;
     autoBackedUp: boolean;
+    autoHydrated?: boolean;
+    conflictPending?: boolean;
   }> => {
     const cleanClientId = clientId.trim();
-    const session = await signInWithGoogle(cleanClientId, 'select_account');
+    const session = await signInWithGoogle(
+      cleanClientId,
+      'select_account',
+      settings.googleAccountEmail || undefined
+    );
     setGoogleSession(session);
     setSyncStatus('syncing');
 
     // 다른 계정으로 로그인한 경우 이전 계정의 spreadsheetId는 무시하고 새 계정 드라이브에서 탐색/생성
-    const isSameAccount =
+    const isSameAccount = Boolean(
       settings.googleAccountEmail &&
-      settings.googleAccountEmail === session.email;
+        settings.googleAccountEmail === session.email
+    );
     const workspace = await ensureGoogleWorkspace(
       session.accessToken,
       settings.departmentName,
@@ -356,18 +522,18 @@ export const App: React.FC = () => {
       googleAutoSync: settings.googleAutoSync ?? true,
     };
     setSettings(nextSettings);
+    settingsRef.current = nextSettings;
     SyncManager.saveSettings(nextSettings);
 
-    // 시트가 새로 생성되었거나 비어 있으면 현재 앱 데이터를 즉시 첫 백업
-    let autoBackedUp = false;
+    // 1) 시트가 새로 생성되었거나 비어 있으면 전체 월 데이터를 즉시 첫 백업
     if (workspace.createdNewSpreadsheet || !workspace.hasExistingData) {
-      const allComputed = computeMonthlyLedger(transactions, yearMonth, 'all');
+      const revisionAtPushStart = dataRevisionRef.current;
       const pushRes = await pushAllToGoogleSheets(
         session.accessToken,
         workspace.spreadsheetId,
         workspace.receiptFolderId,
         {
-          transactions: allComputed.processedTransactions,
+          transactions: enrichAllTransactionsWithEvidence(transactions),
           budgets,
           mokjangs,
           settings: nextSettings,
@@ -377,19 +543,160 @@ export const App: React.FC = () => {
       setTransactions(pushRes.updatedTransactions);
       const savedTx = SyncManager.saveTransactions(pushRes.updatedTransactions);
       setStorageQuotaWarning(!savedTx);
-      const syncedSettings = { ...nextSettings, lastSyncedAt: pushRes.syncedAt };
+      const syncedSettings: AppSettings = {
+        ...nextSettings,
+        lastSyncedAt: pushRes.syncedAt,
+        lastCloudModifiedTime:
+          pushRes.remoteModifiedTime || pushRes.syncedAt,
+      };
       setSettings(syncedSettings);
+      settingsRef.current = syncedSettings;
       SyncManager.saveSettings(syncedSettings);
-      autoBackedUp = true;
+      lastSyncedRevisionRef.current = revisionAtPushStart;
+      setSyncStatus('synced');
+      return {
+        session,
+        workspace,
+        autoBackedUp: true,
+        autoHydrated: false,
+        conflictPending: false,
+      };
     }
 
-    setSyncStatus('synced');
-    return { session, workspace, autoBackedUp };
+    // 2) 드라이브에 기존 작업 데이터가 있는 경우: 동일 버전 / 자동 이어받기 / 충돌 보호 분기
+    const hasLocalUnsavedEdits =
+      dataRevisionRef.current !== lastSyncedRevisionRef.current;
+    const isLocalSampleOrEmpty =
+      !settings.isProductionMode || transactions.length === 0;
+    const isSwitchedAccount = Boolean(
+      settings.googleAccountEmail &&
+        settings.googleAccountEmail !== session.email
+    );
+    const isSameCloudVersion = Boolean(
+      isSameAccount &&
+        isSameCloudTimestamp(
+          workspace.remoteModifiedTime,
+          settings.lastCloudModifiedTime
+        )
+    );
+    const isCloudNewer = isRemoteTimestampNewer(
+      workspace.remoteModifiedTime,
+      settings.lastCloudModifiedTime
+    );
+
+    if (isSameCloudVersion && !hasLocalUnsavedEdits) {
+      setSyncStatus('synced');
+      return {
+        session,
+        workspace,
+        autoBackedUp: false,
+        autoHydrated: false,
+        conflictPending: false,
+      };
+    }
+
+    if (
+      isLocalSampleOrEmpty ||
+      isSwitchedAccount ||
+      (isSameAccount && !hasLocalUnsavedEdits && isCloudNewer)
+    ) {
+      await applyCloudPull(
+        session.accessToken,
+        workspace.spreadsheetId,
+        nextSettings
+      );
+      showSyncToast('구글 드라이브의 최신 작업을 불러왔습니다');
+      return {
+        session,
+        workspace,
+        autoBackedUp: false,
+        autoHydrated: true,
+        conflictPending: false,
+      };
+    }
+
+    // 양쪽에 서로 다른 실제 작업 내역이 충돌할 때만 선택 다이얼로그 오픈
+    setPendingCloudConflict({
+      session,
+      workspace,
+      nextSettings,
+      remoteModifiedTime: workspace.remoteModifiedTime,
+    });
+    setSyncStatus('local');
+    return {
+      session,
+      workspace,
+      autoBackedUp: false,
+      autoHydrated: false,
+      conflictPending: true,
+    };
+  };
+
+  const handleResolveCloudConflict = async (choice: 'pull' | 'push') => {
+    if (!pendingCloudConflict || isResolvingConflict) return;
+    const conflict = pendingCloudConflict;
+    setIsResolvingConflict(true);
+    try {
+      if (choice === 'pull') {
+        await applyCloudPull(
+          conflict.session.accessToken,
+          conflict.workspace.spreadsheetId,
+          conflict.nextSettings
+        );
+        pendingCloudConflictRef.current = null;
+        setPendingCloudConflict(null);
+        showSyncToast('구글 드라이브 최신 작업을 이어받았습니다');
+      } else {
+        setSyncStatus('syncing');
+        const revisionAtPushStart = dataRevisionRef.current;
+        const pushRes = await pushAllToGoogleSheets(
+          conflict.session.accessToken,
+          conflict.workspace.spreadsheetId,
+          conflict.workspace.receiptFolderId,
+          {
+            transactions: enrichAllTransactionsWithEvidence(transactions),
+            budgets,
+            mokjangs,
+            settings: conflict.nextSettings,
+            receiptLayouts: receiptLayoutsRef.current,
+          }
+        );
+        setTransactions(pushRes.updatedTransactions);
+        const savedTx = SyncManager.saveTransactions(
+          pushRes.updatedTransactions
+        );
+        setStorageQuotaWarning(!savedTx);
+        const syncedSettings: AppSettings = {
+          ...conflict.nextSettings,
+          lastSyncedAt: pushRes.syncedAt,
+          lastCloudModifiedTime:
+            pushRes.remoteModifiedTime || pushRes.syncedAt,
+        };
+        setSettings(syncedSettings);
+        settingsRef.current = syncedSettings;
+        SyncManager.saveSettings(syncedSettings);
+        lastSyncedRevisionRef.current = revisionAtPushStart;
+        setSyncStatus('synced');
+        pendingCloudConflictRef.current = null;
+        setPendingCloudConflict(null);
+        showSyncToast('이 기기의 전체 데이터로 구글 드라이브를 업데이트했습니다');
+      }
+    } catch (err) {
+      setSyncStatus('error');
+      showSyncToast(
+        err instanceof Error
+          ? err.message
+          : '동기화 처리 중 오류가 발생했습니다.',
+        'warning'
+      );
+    } finally {
+      setIsResolvingConflict(false);
+    }
   };
 
   const handleGooglePushAll = useCallback(
     async (silent = false) => {
-      if (isPushingGoogleRef.current) return;
+      if (isPushingGoogleRef.current || pendingCloudConflictRef.current) return;
       const activeSession = loadGoogleSession();
       if (
         !activeSession ||
@@ -408,14 +715,14 @@ export const App: React.FC = () => {
 
       isPushingGoogleRef.current = true;
       setSyncStatus('syncing');
+      const revisionAtPushStart = dataRevisionRef.current;
       try {
-        const allComputed = computeMonthlyLedger(transactions, yearMonth, 'all');
         const res = await pushAllToGoogleSheets(
           activeSession.accessToken,
           settings.googleSpreadsheetId,
           settings.googleReceiptFolderId,
           {
-            transactions: allComputed.processedTransactions,
+            transactions: enrichAllTransactionsWithEvidence(transactions),
             budgets,
             mokjangs,
             settings,
@@ -425,9 +732,19 @@ export const App: React.FC = () => {
         setTransactions(res.updatedTransactions);
         const savedTx = SyncManager.saveTransactions(res.updatedTransactions);
         setStorageQuotaWarning(!savedTx);
-        const syncedSettings = { ...settings, lastSyncedAt: res.syncedAt };
+        const latestSettings = settingsRef.current;
+        const syncedSettings: AppSettings = {
+          ...latestSettings,
+          lastSyncedAt: res.syncedAt,
+          lastCloudModifiedTime:
+            res.remoteModifiedTime ||
+            latestSettings.lastCloudModifiedTime ||
+            res.syncedAt,
+        };
         setSettings(syncedSettings);
+        settingsRef.current = syncedSettings;
         SyncManager.saveSettings(syncedSettings);
+        lastSyncedRevisionRef.current = revisionAtPushStart;
         setSyncStatus('synced');
       } catch (err) {
         const refreshed = loadGoogleSession();
@@ -438,7 +755,7 @@ export const App: React.FC = () => {
         isPushingGoogleRef.current = false;
       }
     },
-    [transactions, budgets, mokjangs, settings, receiptLayouts, yearMonth]
+    [transactions, budgets, mokjangs, settings, receiptLayouts]
   );
 
   const handleGooglePullAll = async () => {
@@ -450,41 +767,26 @@ export const App: React.FC = () => {
       );
     }
 
-    setSyncStatus('syncing');
-    try {
-      const pulled = await pullAllFromGoogleSheets(
-        activeSession.accessToken,
-        settings.googleSpreadsheetId,
-        settings
-      );
-      setTransactions(pulled.transactions);
-      const savedTx = SyncManager.saveTransactions(pulled.transactions);
-      setMokjangs(pulled.mokjangs);
-      SyncManager.saveMokjangs(pulled.mokjangs);
-      setBudgets(pulled.budgets);
-      SyncManager.saveBudgets(pulled.budgets);
-      setSettings(pulled.settings);
-      SyncManager.saveSettings(pulled.settings);
-      setReceiptLayouts(pulled.receiptLayouts);
-      receiptLayoutsRef.current = pulled.receiptLayouts;
-      const savedLayouts = SyncManager.saveReceiptLayouts(pulled.receiptLayouts);
-      setStorageQuotaWarning(!savedTx || !savedLayouts);
-      setSyncStatus('synced');
-      return {
-        transactionCount: pulled.transactions.length,
-        mokjangCount: pulled.mokjangs.length,
-        annualBudgetCount: pulled.budgets.annual_budget.items.length,
-        retreatBudgetCount: pulled.budgets.retreat_claim.items.length,
-      };
-    } catch (err) {
-      setSyncStatus('error');
-      throw err;
-    }
+    const pulledSummary = await applyCloudPull(
+      activeSession.accessToken,
+      settings.googleSpreadsheetId,
+      settings
+    );
+    return (
+      pulledSummary || {
+        transactionCount: transactions.length,
+        mokjangCount: mokjangs.length,
+        annualBudgetCount: budgets.annual_budget.items.length,
+        retreatBudgetCount: budgets.retreat_claim.items.length,
+      }
+    );
   };
 
   const handleGoogleSignOut = (disconnectSheet = false) => {
     clearGoogleSession();
     setGoogleSession(null);
+    pendingCloudConflictRef.current = null;
+    setPendingCloudConflict(null);
     if (disconnectSheet) {
       const cleared: AppSettings = {
         ...settings,
@@ -494,21 +796,178 @@ export const App: React.FC = () => {
         googleSpreadsheetUrl: '',
         googleReceiptFolderId: '',
         googleReceiptFolderUrl: '',
+        lastCloudModifiedTime: undefined,
       };
       setSettings(cleared);
+      settingsRef.current = cleared;
       SyncManager.saveSettings(cleared);
     }
     setSyncStatus(settings.gasWebAppUrl.trim() ? 'synced' : 'local');
   };
 
-  // 구글 로그인 & 자동 백업 활성화 시: 모든 탭 변경 후 2.5초 디바운스로 구글 시트 자동 백업
+  // 1) 최초 마운트: URL ?gclient=... 자동 등록 + 이전 계정 무팝업 자동 재연결
+  useEffect(() => {
+    let cancelled = false;
+
+    const initCloudBootstrap = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const gclientParam = params.get('gclient')?.trim() || '';
+      if (gclientParam && gclientParam.endsWith(GOOGLE_CLIENT_ID_SUFFIX)) {
+        const current = SyncManager.loadSettings();
+        const updated: AppSettings = {
+          ...current,
+          googleClientId: gclientParam,
+        };
+        setSettings(updated);
+        settingsRef.current = updated;
+        SyncManager.saveSettings(updated);
+
+        params.delete('gclient');
+        const nextQuery = params.toString();
+        const cleanUrl = `${window.location.pathname}${
+          nextQuery ? `?${nextQuery}` : ''
+        }${window.location.hash}`;
+        window.history.replaceState({}, document.title, cleanUrl);
+
+        showSyncToast(
+          'Google 연결 설정이 적용되었습니다. 상단 [Google 로그인]을 눌러 이어서 작업하세요.',
+          'info',
+          URL_PARAM_TOAST_DURATION_MS
+        );
+        return;
+      }
+
+      const existingSession = loadGoogleSession();
+      const currentSettings = settingsRef.current;
+      const effectiveId = getEffectiveGoogleClientId(currentSettings);
+
+      if (
+        existingSession ||
+        !currentSettings.googleAccountEmail ||
+        !currentSettings.googleSpreadsheetId ||
+        !effectiveId
+      ) {
+        return;
+      }
+
+      const reconnected = await trySilentGoogleReconnect(
+        effectiveId,
+        currentSettings.googleAccountEmail
+      );
+      if (cancelled || !reconnected) return;
+
+      setGoogleSession(reconnected);
+      try {
+        const meta = await getSpreadsheetModifiedTime(
+          reconnected.accessToken,
+          currentSettings.googleSpreadsheetId
+        );
+        if (cancelled) return;
+        const isRemoteNewer = Boolean(
+          !meta.trashed &&
+            isRemoteTimestampNewer(
+              meta.modifiedTime,
+              settingsRef.current.lastCloudModifiedTime
+            )
+        );
+        const hasUnsaved =
+          dataRevisionRef.current !== lastSyncedRevisionRef.current;
+
+        if (isRemoteNewer && !hasUnsaved && !pendingCloudConflictRef.current) {
+          await applyCloudPull(
+            reconnected.accessToken,
+            currentSettings.googleSpreadsheetId,
+            settingsRef.current
+          );
+          if (!cancelled) {
+            showSyncToast('다른 기기의 최신 변경사항을 불러왔습니다');
+          }
+        } else {
+          setSyncStatus('synced');
+        }
+      } catch {
+        if (!cancelled) {
+          setSyncStatus('synced');
+        }
+      }
+    };
+
+    void initCloudBootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyCloudPull, showSyncToast]);
+
+  // 2) 탭 복귀(visibilitychange) 시 다른 기기의 최신 변경사항 자동 감지 및 Pull (15초 스로틀)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const nowMs = Date.now();
+      if (nowMs - lastVisibilityCheckAtRef.current < VISIBILITY_PULL_THROTTLE_MS) {
+        return;
+      }
+
+      const activeSession = loadGoogleSession();
+      const currentSettings = settingsRef.current;
+      if (
+        !activeSession ||
+        !currentSettings.googleSpreadsheetId ||
+        isPushingGoogleRef.current ||
+        isPullingGoogleRef.current ||
+        pendingCloudConflictRef.current ||
+        dataRevisionRef.current !== lastSyncedRevisionRef.current
+      ) {
+        return;
+      }
+
+      lastVisibilityCheckAtRef.current = nowMs;
+      try {
+        const meta = await getSpreadsheetModifiedTime(
+          activeSession.accessToken,
+          currentSettings.googleSpreadsheetId
+        );
+        if (
+          !meta.trashed &&
+          isRemoteTimestampNewer(
+            meta.modifiedTime,
+            settingsRef.current.lastCloudModifiedTime
+          ) &&
+          dataRevisionRef.current === lastSyncedRevisionRef.current &&
+          !pendingCloudConflictRef.current
+        ) {
+          await applyCloudPull(
+            activeSession.accessToken,
+            currentSettings.googleSpreadsheetId,
+            settingsRef.current
+          );
+          showSyncToast('다른 기기의 최신 변경사항을 불러왔습니다');
+        }
+      } catch {
+        const refreshed = loadGoogleSession();
+        if (!refreshed) {
+          setGoogleSession(null);
+          setSyncStatus('local');
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [applyCloudPull, showSyncToast]);
+
+  // 3) 구글 로그인 & 자동 백업 활성화 시: 모든 탭 변경 후 2초 디바운스로 구글 시트 자동 백업
   useEffect(() => {
     if (dataRevision === 0) return;
+    if (dataRevision === lastSyncedRevisionRef.current) return;
     if (
       !googleSession ||
       !settings.googleSpreadsheetId ||
       !settings.googleReceiptFolderId ||
-      settings.googleAutoSync === false
+      settings.googleAutoSync === false ||
+      pendingCloudConflict
     ) {
       return;
     }
@@ -518,7 +977,7 @@ export const App: React.FC = () => {
     }
     autoSyncTimerRef.current = setTimeout(() => {
       void handleGooglePushAll(true);
-    }, 2500);
+    }, AUTO_SYNC_DEBOUNCE_MS);
 
     return () => {
       if (autoSyncTimerRef.current) {
@@ -531,8 +990,33 @@ export const App: React.FC = () => {
     settings.googleSpreadsheetId,
     settings.googleReceiptFolderId,
     settings.googleAutoSync,
+    pendingCloudConflict,
     handleGooglePushAll,
   ]);
+
+  // 4) 미저장 변경 대기 중 또는 업로드 중 브라우저 이탈 방지
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      const hasActiveCloud = Boolean(
+        loadGoogleSession() &&
+          settingsRef.current.googleSpreadsheetId &&
+          settingsRef.current.googleAutoSync !== false
+      );
+      if (!hasActiveCloud) return;
+      const hasPendingSync =
+        isPushingGoogleRef.current ||
+        dataRevisionRef.current !== lastSyncedRevisionRef.current;
+      if (!hasPendingSync) return;
+
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   const handlePullFromGas = async (url: string) => {
     setSyncStatus('syncing');
@@ -569,9 +1053,8 @@ export const App: React.FC = () => {
 
   const handlePushAllToGas = async (url: string) => {
     setSyncStatus('syncing');
-    const allComputed = computeMonthlyLedger(transactions, yearMonth, 'all');
     const result = await SyncManager.pushAllToGas(url, {
-      transactions: allComputed.processedTransactions,
+      transactions: enrichAllTransactionsWithEvidence(transactions),
       budgets,
       mokjangs,
       settings,
@@ -696,50 +1179,119 @@ export const App: React.FC = () => {
     setIsSettingsOpen(true);
   };
 
+  const effectiveClientId = getEffectiveGoogleClientId(settings);
+
+  const handleHeaderQuickSignIn = async () => {
+    if (!effectiveClientId) {
+      openSettingsAt('connection');
+      return;
+    }
+    try {
+      const res = await handleGoogleSignIn(effectiveClientId);
+      if (res.autoBackedUp) {
+        showSyncToast('구글 드라이브에 전체 데이터를 백업했습니다');
+      } else if (!res.autoHydrated && !res.conflictPending) {
+        showSyncToast('구글 드라이브에 연결되었습니다');
+      }
+    } catch (err) {
+      setSyncStatus('local');
+      showSyncToast(
+        err instanceof Error ? err.message : '구글 로그인에 실패했습니다.',
+        'warning'
+      );
+    }
+  };
+
+  const handleHeaderManualRefresh = async () => {
+    try {
+      await handleGooglePullAll();
+      showSyncToast('구글 드라이브 최신 데이터를 불러왔습니다');
+    } catch (err) {
+      showSyncToast(
+        err instanceof Error
+          ? err.message
+          : '최신 데이터를 불러오지 못했습니다.',
+        'warning'
+      );
+    }
+  };
+
   const renderSyncBadge = () => {
     if (syncStatus === 'syncing') {
       return (
-        <span className="px-2.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1">
-          <span>🔵</span>
-          <span>시트 백업 중</span>
+        <span className="px-2.5 py-1.5 rounded-full bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-[#3182F6] animate-pulse shrink-0" />
+          <span>동기화 중</span>
         </span>
       );
     }
     if (settings.googleSpreadsheetUrl) {
       if (googleSession) {
         return (
-          <a
-            href={settings.googleSpreadsheetUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1 transition-all"
-          >
-            <span>🟢</span>
-            <span>내 시트</span>
-            <ExternalLink className="w-3 h-3 text-[#8B95A1]" />
-          </a>
+          <div className="flex items-center gap-1">
+            <a
+              href={settings.googleSpreadsheetUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5 transition-all"
+            >
+              <span className="w-2 h-2 rounded-full bg-[#00C471] shrink-0" />
+              <span>내 드라이브 시트</span>
+              <ExternalLink className="w-3 h-3 text-[#8B95A1]" />
+            </a>
+            <button
+              type="button"
+              onClick={() => void handleHeaderManualRefresh()}
+              aria-label="구글 드라이브 최신화"
+              title="구글 드라이브 최신 데이터 불러오기"
+              className="w-7 h-7 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] flex items-center justify-center active:scale-[0.97] transition-all duration-150"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
         );
       }
       return (
         <button
           type="button"
-          onClick={() => openSettingsAt('connection')}
-          className="px-2.5 py-1.5 rounded-full bg-[#FFF8E6] text-[#B45309] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97]"
+          onClick={() => void handleHeaderQuickSignIn()}
+          className="px-2.5 py-1.5 rounded-full bg-[#FFF8E6] hover:bg-[#FEF0C7] text-[#B45309] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
         >
-          <span>🟡</span>
-          <span>시트 재연결</span>
+          <span className="w-2 h-2 rounded-full bg-[#F59E0B] shrink-0" />
+          <span>다시 연결</span>
         </button>
       );
     }
     if (syncStatus === 'synced' && settings.gasWebAppUrl.trim()) {
       return (
-        <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1">
-          <span>🟢</span>
+        <span className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] text-[#191F28] text-[12px] font-semibold flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-[#00C471] shrink-0" />
           <span>시트 연동</span>
         </span>
       );
     }
-    return null;
+    if (effectiveClientId) {
+      return (
+        <button
+          type="button"
+          onClick={() => void handleHeaderQuickSignIn()}
+          className="px-2.5 py-1.5 rounded-full bg-[#3182F6] hover:bg-[#1B64DA] text-[#FFFFFF] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+        >
+          <LogIn className="w-3.5 h-3.5" />
+          <span>Google 로그인</span>
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => openSettingsAt('connection')}
+        className="px-2.5 py-1.5 rounded-full bg-[#F9FAFB] hover:bg-[#E5E8EB] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+      >
+        <Cloud className="w-3.5 h-3.5 text-[#3182F6]" />
+        <span>드라이브 연결</span>
+      </button>
+    );
   };
 
   const hasGeminiKey = Boolean(settings.geminiApiKey?.trim());
@@ -887,6 +1439,38 @@ export const App: React.FC = () => {
           </nav>
         </div>
       </header>
+
+      {/* 클라우드 동기화 안내 토스트 (@media print 시 숨김) */}
+      {syncToast && (
+        <div className="no-print max-w-[980px] mx-auto px-4 sm:px-6 pt-3">
+          <div
+            className={`rounded-2xl px-4 py-2.5 flex items-center justify-between gap-3 text-[13px] font-semibold ${
+              syncToast.tone === 'warning'
+                ? 'bg-[#FFEEF0] text-[#F04452]'
+                : 'bg-[#E8F3FF] text-[#1B64DA]'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              {syncToast.tone === 'warning' ? (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              ) : (
+                <Cloud className="w-4 h-4 shrink-0" />
+              )}
+              <span className="break-words [word-break:keep-all]">
+                {syncToast.text}
+              </span>
+            </div>
+            <button
+              type="button"
+              aria-label="알림 닫기"
+              onClick={() => setSyncToast(null)}
+              className="p-1 rounded-lg opacity-70 hover:opacity-100 shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 로컬 스토리지 용량 부족 경고 배너 (@media print 시 숨김) */}
       {storageQuotaWarning && (
@@ -1105,6 +1689,75 @@ export const App: React.FC = () => {
           retreatBudgetCount: budgets.retreat_claim.items.length,
         }}
       />
+
+      {/* 구글 드라이브 ↔ 이 기기 동기화 충돌 선택 다이얼로그 */}
+      <TdsDialog
+        open={Boolean(pendingCloudConflict)}
+        onClose={() => {
+          // 해결 완료로 닫히는 네이티브 dialog close 이벤트나 처리 중 닫기는 무시
+          if (isResolvingConflict || !pendingCloudConflictRef.current) return;
+          // 실제 미해결 취소일 때만 세션을 보류해 2초 자동 푸시가 드라이브를 무단 덮어쓰는 것을 차단
+          pendingCloudConflictRef.current = null;
+          clearGoogleSession();
+          setGoogleSession(null);
+          setPendingCloudConflict(null);
+          setSyncStatus('local');
+          showSyncToast(
+            '동기화 선택을 취소해 연결을 보류했습니다. 상단 [다시 연결]을 눌러주세요',
+            'info'
+          );
+        }}
+        title="구글 드라이브 동기화 선택"
+        subtitle={pendingCloudConflict?.session.email}
+        variant="modal"
+      >
+        <div className="space-y-4 pt-1">
+          <p className="text-[14px] text-[#4E5968] leading-relaxed [word-break:keep-all]">
+            이 기기와 구글 드라이브 모두에 작업 내역이 있습니다. 어느 데이터를
+            기준으로 이어서 작업할까요?
+          </p>
+
+          <div className="rounded-2xl bg-[#F9FAFB] p-3.5 space-y-1.5 text-[13px] text-[#4E5968] tabular-nums">
+            <div className="flex items-center justify-between">
+              <span>이 기기 장부 내역</span>
+              <span className="font-bold text-[#191F28]">
+                {transactions.length}건
+              </span>
+            </div>
+            {pendingCloudConflict?.remoteModifiedTime && (
+              <div className="flex items-center justify-between">
+                <span>구글 드라이브 최근 저장</span>
+                <span className="font-semibold text-[#1B64DA]">
+                  {new Date(
+                    pendingCloudConflict.remoteModifiedTime
+                  ).toLocaleString('ko-KR')}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <button
+              type="button"
+              disabled={isResolvingConflict}
+              onClick={() => void handleResolveCloudConflict('pull')}
+              className="w-full h-12 rounded-2xl bg-[#3182F6] hover:bg-[#1B64DA] disabled:opacity-50 text-[#FFFFFF] text-[14.5px] font-bold active:scale-[0.97] transition-all duration-150"
+            >
+              {isResolvingConflict
+                ? '동기화 처리 중...'
+                : '구글 드라이브 최신 이어받기 (권장)'}
+            </button>
+            <button
+              type="button"
+              disabled={isResolvingConflict}
+              onClick={() => void handleResolveCloudConflict('push')}
+              className="w-full h-11 rounded-2xl bg-[#F2F4F6] hover:bg-[#E5E8EB] disabled:opacity-50 text-[#191F28] text-[13.5px] font-semibold active:scale-[0.97] transition-all duration-150"
+            >
+              이 기기 데이터로 드라이브 덮어쓰기
+            </button>
+          </div>
+        </div>
+      </TdsDialog>
     </div>
   );
 };

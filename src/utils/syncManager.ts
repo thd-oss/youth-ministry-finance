@@ -1291,6 +1291,45 @@ export function computeMokjangSummary(
   };
 }
 
+/**
+ * 전체 거래 내역을 월별 누락 없이 날짜·생성순으로 정렬하고,
+ * 각 월(YYYY-MM)별 증빙번호(#01, #02, ...)와 전체 누적 잔액(runningBalance)을 부여합니다.
+ * (구글 시트 전체 백업 시 특정 월만 필터링되어 타 월 거래가 유실되는 문제를 원천 차단)
+ */
+export function enrichAllTransactionsWithEvidence(
+  transactions: Transaction[]
+): ProcessedTransaction[] {
+  const sorted = [...transactions].sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return (a.createdAt || '').localeCompare(b.createdAt || '');
+  });
+
+  const monthEvidenceCounters = new Map<string, number>();
+  let runningBalance = 0;
+
+  return sorted.map((tx) => {
+    if (tx.type === 'income') {
+      runningBalance += tx.amount;
+    } else {
+      runningBalance -= tx.amount;
+    }
+
+    let evidenceNo: string | undefined = undefined;
+    if (tx.type === 'expense' || Boolean(tx.receiptImage)) {
+      const ym = (tx.date || '').slice(0, 7) || 'unknown';
+      const nextCount = (monthEvidenceCounters.get(ym) || 0) + 1;
+      monthEvidenceCounters.set(ym, nextCount);
+      evidenceNo = `#${String(nextCount).padStart(2, '0')}`;
+    }
+
+    return {
+      ...tx,
+      runningBalance,
+      evidenceNo,
+    };
+  });
+}
+
 export function computeMonthlyLedger(
   allTransactions: Transaction[],
   yearMonth: string,

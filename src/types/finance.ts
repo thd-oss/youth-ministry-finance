@@ -210,6 +210,7 @@ export interface AppSettings {
   customIncomeCategories: string[];
   customExpenseCategories: string[];
   lastSyncedAt?: string;
+  lastCloudModifiedTime?: string;
 }
 
 export type SyncStatus = 'local' | 'syncing' | 'synced' | 'error';
