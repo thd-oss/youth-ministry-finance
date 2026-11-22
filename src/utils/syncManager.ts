@@ -39,6 +39,7 @@ const STORAGE_KEYS = {
 };
 
 const BACKUP_SCHEMA_VERSION = '3.1';
+const MONTHS_PER_YEAR = 12;
 const NORMALIZED_COORD_SCALE = 10000;
 const MIN_VALID_PLACEMENT_SIZE = 0.01;
 const MAX_NORMALIZED_BOUND_EPSILON = 1.001;
@@ -412,11 +413,19 @@ export interface BudgetsMap {
   annual_budget: BudgetDocument;
 }
 
+export interface SubCategoryBudgetAllocation {
+  subCategory: string;
+  annualBudget: number;
+  monthlyBudget: number;
+  detailNames: string[];
+}
+
 export interface CategoryBudgetAllocation {
   category: string;
   annualBudget: number;
   monthlyBudget: number;
   itemNames: string[];
+  subAllocations: Record<string, SubCategoryBudgetAllocation>;
 }
 
 export interface DynamicFiscalSchema {
@@ -857,7 +866,8 @@ export const SyncManager = {
       '구분',
       '회계계정',
       '관/항(1차 사역·수입원)',
-      '세목(2차 품목·명목)',
+      '세목(2차 분류)',
+      '3차분류(세부목)',
       '귀속목장',
       '목장지출구분',
       '적요(내역명)',
@@ -890,6 +900,7 @@ export const SyncManager = {
       accountMap[tx.account] || tx.account,
       tx.category,
       tx.subCategory || '-',
+      tx.detailCategory || '-',
       tx.mokjangId ? mokjangMap.get(tx.mokjangId) || tx.mokjangId : '-',
       tx.mokjangSubType ? MOKJANG_SUBTYPE_LABELS[tx.mokjangSubType] : '-',
       tx.title,
@@ -1043,7 +1054,7 @@ export const SyncManager = {
 };
 
 /**
- * 연도별 예산안(annual_budget)의 관/항 구조를 분석하여
+ * 연도별 예산안(annual_budget)의 관·항·목(1·2·3차 분류) 구조를 분석하여
  * 앱 전체(장부 카테고리 선택 칩, 결산서 예산 대비 집행률 표)와 실시간 동기화합니다.
  */
 export function deriveDynamicFiscalSchema(
@@ -1071,15 +1082,76 @@ export function deriveDynamicFiscalSchema(
         annualBudget: 0,
         monthlyBudget: 0,
         itemNames: [],
+        subAllocations: {},
       };
     }
-    categoryAllocations[cat].annualBudget += Number(item.amount) || 0;
+    const itemAmount = Number(item.amount) || 0;
+    categoryAllocations[cat].annualBudget += itemAmount;
     categoryAllocations[cat].monthlyBudget = Math.round(
-      categoryAllocations[cat].annualBudget / 12
+      categoryAllocations[cat].annualBudget / MONTHS_PER_YEAR
     );
+
     const subLabel = item.subCategory?.trim() || item.itemName.trim();
-    if (subLabel && !categoryAllocations[cat].itemNames.includes(subLabel)) {
-      categoryAllocations[cat].itemNames.push(subLabel);
+    if (subLabel) {
+      if (!categoryAllocations[cat].itemNames.includes(subLabel)) {
+        categoryAllocations[cat].itemNames.push(subLabel);
+      }
+      if (!categoryAllocations[cat].subAllocations[subLabel]) {
+        categoryAllocations[cat].subAllocations[subLabel] = {
+          subCategory: subLabel,
+          annualBudget: 0,
+          monthlyBudget: 0,
+          detailNames: [],
+        };
+      }
+      const subAlloc = categoryAllocations[cat].subAllocations[subLabel];
+      subAlloc.annualBudget += itemAmount;
+      subAlloc.monthlyBudget = Math.round(
+        subAlloc.annualBudget / MONTHS_PER_YEAR
+      );
+
+      const detailLabel = item.detailCategory?.trim();
+      if (detailLabel && !subAlloc.detailNames.includes(detailLabel)) {
+        subAlloc.detailNames.push(detailLabel);
+      }
+    }
+  });
+
+  // 기존 지출 거래 내역의 2차/3차 분류도 병합 보존 (직접 입력한 분류가 장부 칩에 자동 추천되도록 유지)
+  transactions.forEach((tx) => {
+    if (tx.type !== 'expense') return;
+    const cat = tx.category.trim();
+    if (!cat) return;
+    const sub = tx.subCategory?.trim();
+    const detail = tx.detailCategory?.trim();
+    if (!sub && !detail) return;
+
+    if (!categoryAllocations[cat]) {
+      categoryAllocations[cat] = {
+        category: cat,
+        annualBudget: 0,
+        monthlyBudget: 0,
+        itemNames: [],
+        subAllocations: {},
+      };
+    }
+
+    if (sub) {
+      if (!categoryAllocations[cat].itemNames.includes(sub)) {
+        categoryAllocations[cat].itemNames.push(sub);
+      }
+      if (!categoryAllocations[cat].subAllocations[sub]) {
+        categoryAllocations[cat].subAllocations[sub] = {
+          subCategory: sub,
+          annualBudget: 0,
+          monthlyBudget: 0,
+          detailNames: [],
+        };
+      }
+      const subAlloc = categoryAllocations[cat].subAllocations[sub];
+      if (detail && !subAlloc.detailNames.includes(detail)) {
+        subAlloc.detailNames.push(detail);
+      }
     }
   });
 

@@ -1198,6 +1198,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                           <span className="px-2 py-0.5 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold">
                             {tx.category}
                             {tx.subCategory ? ` › ${tx.subCategory}` : ''}
+                            {tx.detailCategory ? ` › ${tx.detailCategory}` : ''}
                           </span>
                           {mj && (
                             <span className="px-2 py-0.5 rounded-lg bg-[#F9FAFB] text-[#4E5968] text-[11px] font-semibold">
@@ -1560,7 +1561,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                           구분
                         </th>
                         <th className="border border-[#191F28] py-1.5 px-1.5 w-[94px]">
-                          관/항 · 세목
+                          분류 (관·항·목)
                         </th>
                         <th className="border border-[#191F28] py-1.5 px-2 text-left">
                           적요 (내역 및 산출근거)
@@ -1606,9 +1607,13 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                               <div className="font-semibold text-[#191F28]">
                                 {tx.category}
                               </div>
-                              {tx.subCategory && (
+                              {(tx.subCategory || tx.detailCategory) && (
                                 <div className="text-[9.5px] text-[#4E5968] leading-tight mt-0.5">
-                                  ({tx.subCategory})
+                                  (
+                                  {[tx.subCategory, tx.detailCategory]
+                                    .filter(Boolean)
+                                    .join(' › ')}
+                                  )
                                 </div>
                               )}
                             </td>
@@ -1856,6 +1861,9 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                     {formatShortDate(tx.date)} | {tx.category}
                                     {tx.subCategory
                                       ? ` › ${tx.subCategory}`
+                                      : ''}
+                                    {tx.detailCategory
+                                      ? ` › ${tx.detailCategory}`
                                       : ''}{' '}
                                     | {tx.title}
                                   </span>
@@ -1936,6 +1944,9 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                                   {formatShortDate(tx.date)} | {tx.category}
                                   {tx.subCategory
                                     ? ` › ${tx.subCategory}`
+                                    : ''}
+                                  {tx.detailCategory
+                                    ? ` › ${tx.detailCategory}`
                                     : ''}{' '}
                                   | {tx.title}
                                 </span>

@@ -782,6 +782,7 @@ export async function pushAllToGoogleSheets(
       '수정일시',
       '영수증분할정보',
       '영수증메타',
+      '3차분류',
     ],
     ...payload.transactions.map((tx, idx) => {
       const saved = uploadedTransactions[idx];
@@ -805,6 +806,7 @@ export async function pushAllToGoogleSheets(
         now,
         saved.receiptEdit ? JSON.stringify(saved.receiptEdit) : '',
         saved.receiptMeta ? JSON.stringify(saved.receiptMeta) : '',
+        saved.detailCategory || '',
       ];
     }),
   ];
@@ -846,6 +848,7 @@ export async function pushAllToGoogleSheets(
       '산출식',
       '금액',
       '비고',
+      '3차분류',
     ],
   ];
 
@@ -907,6 +910,7 @@ export async function pushAllToGoogleSheets(
         item.formula || '',
         Number(item.amount) || 0,
         item.note || '',
+        item.detailCategory || '',
       ]);
     });
   });
@@ -1020,9 +1024,9 @@ export async function pullAllFromGoogleSheets(
   await ensureAllSheetTabs(accessToken, spreadsheetId);
 
   const ranges = [
-    `${SHEET_NAMES.LEDGER}!A1:S`,
+    `${SHEET_NAMES.LEDGER}!A1:T`,
     `${SHEET_NAMES.MOKJANG}!A1:G`,
-    `${SHEET_NAMES.BUDGET_ITEMS}!A1:I`,
+    `${SHEET_NAMES.BUDGET_ITEMS}!A1:J`,
     `${SHEET_NAMES.BUDGET_META}!A1:R`,
     `${SHEET_NAMES.SETTINGS}!A1:C`,
   ];
@@ -1083,6 +1087,7 @@ export async function pullAllFromGoogleSheets(
       account,
       category: String(r[4] || '기타운영비'),
       subCategory: r[5] ? String(r[5]) : undefined,
+      detailCategory: r[19] ? String(r[19]) : undefined,
       mokjangId: r[6] ? String(r[6]) : undefined,
       mokjangSubType,
       title: String(r[8] || ''),
@@ -1167,6 +1172,7 @@ export async function pullAllFromGoogleSheets(
       entryType: String(r[2]) === 'income' ? 'income' : 'expense',
       category: String(r[3] || ''),
       subCategory: r[4] ? String(r[4]) : undefined,
+      detailCategory: r[9] ? String(r[9]) : undefined,
       itemName: String(r[5] || ''),
       formula: String(r[6] || ''),
       amount: Number(r[7]) || 0,

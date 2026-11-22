@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import {
   ACCOUNT_LABELS,
+  COMMON_EXPENSE_SUBCATEGORIES,
+  COMMON_INCOME_SUBCATEGORIES,
   getSuggestedSubCategories,
   LedgerAccount,
   MOKJANG_SUBTYPE_LABELS,
@@ -38,6 +40,8 @@ import { TdsDialog } from './TdsDialog';
 
 /** 2행2열(4-up) 기준 긴 영수증 판정 종횡비(높이 / 너비) 임계값 */
 const LONG_RECEIPT_ASPECT_THRESHOLD = 1.55;
+/** 3차 분류 빠른 선택 칩 최대 노출 개수 */
+const MAX_DETAIL_CATEGORY_CHIPS = 10;
 
 interface TransactionBottomSheetProps {
   open: boolean;
@@ -97,6 +101,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     expenseCategories[0] || '예배/양육비'
   );
   const [subCategory, setSubCategory] = useState<string>('');
+  const [detailCategory, setDetailCategory] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('체크카드');
   const [title, setTitle] = useState<string>('');
   const [memo, setMemo] = useState<string>('');
@@ -143,6 +148,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       setAmountStr(formatNumber(initialTransaction.amount));
       setCategory(initialTransaction.category);
       setSubCategory(initialTransaction.subCategory || '');
+      setDetailCategory(initialTransaction.detailCategory || '');
       setPaymentMethod(initialTransaction.paymentMethod);
       setTitle(initialTransaction.title);
       setMemo(initialTransaction.memo);
@@ -166,6 +172,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       setMemo('');
       setMokjangId(presetMokjangId || '');
       setMokjangSubType(presetMokjangSubType || 'fellowship');
+      setDetailCategory('');
 
       if (initialTxType === 'income') {
         const defaultIncCat =
@@ -213,6 +220,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
 
   const handleTypeChange = (nextType: TransactionType) => {
     setType(nextType);
+    setDetailCategory('');
     if (nextType === 'income') {
       const nextCat = incomeCategories.includes(category)
         ? category
@@ -240,6 +248,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
 
   const handleCategorySelect = (nextCat: string) => {
     setCategory(nextCat);
+    setDetailCategory('');
     const budgetItems =
       type === 'expense' ? categoryAllocations[nextCat]?.itemNames || [] : [];
     const nextSubs = getSuggestedSubCategories(type, nextCat, budgetItems);
@@ -411,6 +420,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       account,
       category,
       subCategory: subCategory.trim() || undefined,
+      detailCategory: detailCategory.trim() || undefined,
       title: title.trim(),
       memo: memo.trim(),
       amount: numericAmount,
@@ -437,6 +447,19 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     category,
     currentBudgetItemNames
   );
+  const currentBudgetDetailNames =
+    type === 'expense' && subCategory.trim()
+      ? categoryAllocations[category]?.subAllocations?.[subCategory.trim()]
+          ?.detailNames || []
+      : [];
+  const suggestedDetailCategories = Array.from(
+    new Set([
+      ...currentBudgetDetailNames,
+      ...(type === 'income'
+        ? COMMON_INCOME_SUBCATEGORIES
+        : COMMON_EXPENSE_SUBCATEGORIES),
+    ])
+  ).slice(0, MAX_DETAIL_CATEGORY_CHIPS);
   const hasGeminiKey = Boolean(geminiApiKey.trim());
 
   const isSameInitialReceipt =
@@ -778,19 +801,15 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
         </div>
 
         {/* =================================================================
-            4. 2단계 회계 분류: 1차 구분(사역/수입원) + 2차 세부 항목(세목)
+            4. 3단계 회계 분류: 1차 분류 · 2차 분류 · 3차 분류 (선택)
            ================================================================= */}
         <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-4">
-          {/* Step A: 1차 구분 */}
+          {/* Step A: 1차 분류 */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
                 <Layers className="w-4 h-4 text-[#3182F6]" />
-                <span>
-                  {type === 'income'
-                    ? '1차 구분 (수입원)'
-                    : '1차 구분 (사역/행사)'}
-                </span>
+                <span>1차 분류</span>
               </label>
               <button
                 type="button"
@@ -868,11 +887,11 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
             </div>
           </div>
 
-          {/* Step B: 2차 세부 항목 (세목) */}
+          {/* Step B: 2차 분류 */}
           <div className="pt-3 border-t border-[#E5E8EB] space-y-2">
             <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
               <Tag className="w-4 h-4 text-[#3182F6]" />
-              <span>2차 세부 항목 (세목)</span>
+              <span>2차 분류</span>
             </label>
 
             <div className="flex flex-wrap gap-1.5">
@@ -902,8 +921,57 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
               placeholder={
                 type === 'income'
                   ? '직접 입력 (예: 월 정기예산 수령, 수련회 참가등록비)'
-                  : '직접 입력 (예: 식비·간식/다과, 교재·도서, 강사·사례비)'
+                  : '직접 입력 (예: 동계수련회, 주일 목장모임, 제자훈련)'
               }
+              className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13px] font-medium text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
+            />
+          </div>
+
+          {/* Step C: 3차 분류 (선택) */}
+          <div className="pt-3 border-t border-[#E5E8EB] space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[13px] font-bold text-[#191F28] flex items-center gap-1.5">
+                <Tag className="w-4 h-4 text-[#8B95A1]" />
+                <span>3차 분류 (선택)</span>
+              </label>
+              {detailCategory && (
+                <button
+                  type="button"
+                  onClick={() => setDetailCategory('')}
+                  className="text-[12px] font-medium text-[#8B95A1] hover:text-[#4E5968]"
+                >
+                  해제
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {suggestedDetailCategories.map((detail) => {
+                const active = detailCategory === detail;
+                return (
+                  <button
+                    key={detail}
+                    type="button"
+                    onClick={() =>
+                      setDetailCategory(active ? '' : detail)
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-[12.5px] font-semibold transition-all duration-150 active:scale-[0.97] ${
+                      active
+                        ? 'bg-[#3182F6] text-[#FFFFFF]'
+                        : 'bg-[#FFFFFF] text-[#4E5968] hover:bg-[#E5E8EB]'
+                    }`}
+                  >
+                    {detail}
+                  </button>
+                );
+              })}
+            </div>
+
+            <input
+              type="text"
+              value={detailCategory}
+              onChange={(e) => setDetailCategory(e.target.value)}
+              placeholder="직접 입력 (예: 숙박·대관·차량, 식비·간식/다과)"
               className="w-full h-10 px-3.5 rounded-xl bg-[#FFFFFF] text-[13px] font-medium text-[#191F28] placeholder:text-[#8B95A1] focus:outline-none focus:ring-2 focus:ring-[#3182F6]"
             />
           </div>

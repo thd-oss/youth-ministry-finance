@@ -125,7 +125,8 @@ export interface Transaction {
   type: TransactionType;
   account: LedgerAccount;
   category: string; // 1차 분류 (관/항: 사역 목적 또는 수입원)
-  subCategory?: string; // 2차 분류 (세목: 식비·간식, 교재·도서, 강사·사례, 정기지원금, 참가등록비 등)
+  subCategory?: string; // 2차 분류 (항/세목: 세부 사역·행사·명목)
+  detailCategory?: string; // 3차 분류 (목/세부목: 품목·집행 유형, 선택 입력)
   title: string; // 적요 (가맹점/내역명)
   memo: string; // 상세 산출근거 메모 (예: 김밥 3,500원×10줄)
   amount: number;
@@ -147,8 +148,9 @@ export interface ProcessedTransaction extends Transaction {
 export interface BudgetLineItem {
   id: string;
   entryType?: TransactionType; // 'expense'(기본) | 'income'(수입 예산 항목)
-  category: string; // 1차 구분 (관/항) - 앱의 동적 카테고리 스키마와 연동
-  subCategory?: string; // 2차 세목 (선택: 식비·간식, 교재·도서 등)
+  category: string; // 1차 구분 (관) - 앱의 동적 카테고리 스키마와 연동
+  subCategory?: string; // 2차 구분 (항: 선택)
+  detailCategory?: string; // 3차 구분 (목: 선택)
   itemName: string; // 세부 항목명
   formula: string; // 산출 기초 (단가 × 수량 × 횟수)
   amount: number; // 청구/예산 금액

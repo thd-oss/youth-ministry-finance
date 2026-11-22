@@ -112,6 +112,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         const matchSubCategory = (tx.subCategory || '')
           .toLowerCase()
           .includes(q);
+        const matchDetailCategory = (tx.detailCategory || '')
+          .toLowerCase()
+          .includes(q);
         const matchEvidence = (tx.evidenceNo || '').toLowerCase().includes(q);
         const matchMokjang = mjName.includes(q);
         if (
@@ -119,6 +122,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           !matchMemo &&
           !matchCategory &&
           !matchSubCategory &&
+          !matchDetailCategory &&
           !matchEvidence &&
           !matchMokjang
         ) {
@@ -559,6 +563,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                               {tx.subCategory && (
                                 <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#191F28] text-[11.5px] font-semibold">
                                   › {tx.subCategory}
+                                </span>
+                              )}
+                              {tx.detailCategory && (
+                                <span className="px-2 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[11.5px] font-semibold">
+                                  › {tx.detailCategory}
                                 </span>
                               )}
                               <span>·</span>
