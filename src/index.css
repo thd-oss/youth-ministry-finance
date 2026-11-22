@@ -93,6 +93,29 @@ dialog.tds-modal-sheet {
   overflow: hidden;
 }
 
+dialog.tds-modal-wide {
+  margin: auto;
+  width: calc(100% - 24px);
+  max-width: 980px;
+  border: none;
+  padding: 0;
+  background: #FFFFFF;
+  border-radius: 24px;
+  color: #191F28;
+  max-height: 92dvh;
+  overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  dialog.tds-modal-wide {
+    margin: auto auto 0 auto;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 28px 28px 0 0;
+    max-height: 92dvh;
+  }
+}
+
 dialog::backdrop {
   background-color: rgba(25, 31, 40, 0.42);
   backdrop-filter: blur(2px);
@@ -113,6 +136,12 @@ dialog::backdrop {
   background: #FFFFFF;
   color: #191F28;
   position: relative;
+}
+
+/* 화면 미리보기에서도 A4 1매 높이를 정확히 고정해 내부 격자(h-full min-h-0)가 인쇄와 동일하게 분배되도록 보장 */
+.a4-page-receipt {
+  height: 297mm;
+  overflow: hidden;
 }
 
 /* Print CSS Rules (@media print: 다중 페이지 자연 분할 + 모든 장 여백 일관 유지) */
@@ -165,6 +194,17 @@ dialog::backdrop {
     overflow: visible !important;
   }
 
+  /* 페이지 브레이크는 실제 형제 래퍼(.a4-scale-outer)에 적용해 마지막 페이지 불필요한 빈 장 출력 방지 */
+  .a4-scale-outer {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .a4-scale-outer:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
   .print-container {
     padding: 0 !important;
     margin: 0 !important;
@@ -180,8 +220,8 @@ dialog::backdrop {
     box-sizing: border-box !important;
     background: #FFFFFF !important;
     box-shadow: none !important;
-    page-break-after: always !important;
-    break-after: page !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 
   /* 흐름형 문서(결산 보고서, 예산안/청구서): block 전환으로 다중 페이지 표 자연 분할 보장 */
@@ -190,17 +230,18 @@ dialog::backdrop {
     height: auto !important;
   }
 
-  /* 영수증 증빙철: 이미 페이지별 분할된 2x2 / 2x1 고정 격자 레이아웃 유지 */
+  /* 영수증 증빙철: 이미 페이지별 분할된 2x2 / 2x1 고정 격자 레이아웃 유지 (서브픽셀 빈 장 방지 안전치 268.5mm) */
   .a4-page-receipt {
     display: flex !important;
     flex-direction: column !important;
     justify-content: space-between !important;
-    height: calc(297mm - 28mm) !important;
+    height: 268.5mm !important;
+    overflow: hidden !important;
   }
 
-  .a4-page:last-child {
-    page-break-after: auto !important;
-    break-after: auto !important;
+  /* 명시적 빈 슬롯은 인쇄 시 그리드 트랙은 유지하고 시각 요소만 숨겨 깔끔한 여백 유지 */
+  .receipt-slot-empty {
+    visibility: hidden !important;
   }
 
   /* 다중 페이지 표 헤더 반복 및 행/블록 분할 보호 */

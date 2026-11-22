@@ -5,13 +5,118 @@ export interface CompressedImageResult {
   meta: ReceiptMetadata;
 }
 
+/** 긴 영수증 판정 종횡비(높이 / 너비) 임계값 */
+const LONG_RECEIPT_ASPECT_THRESHOLD = 2.2;
+/** 일반 영수증 최대 가로 해상도 (px) */
+const DEFAULT_MAX_WIDTH_PX = 1200;
+/** 긴 영수증 최대 가로 해상도 (px) — A4 2열 300 DPI 가독성 확보 */
+const LONG_RECEIPT_MAX_WIDTH_PX = 1000;
+/** iOS Safari 16.7MP Canvas 상한 대비 안전 픽셀 면적 한도 */
+const MAX_CANVAS_PIXELS = 8_000_000;
+/** 초장문 영수증 세로 픽셀 상한 */
+const MAX_CANVAS_HEIGHT_PX = 8000;
+/** 일반/긴 영수증 Base64 목표 용량 상한 (KB) */
+const NORMAL_TARGET_MAX_KB = 350;
+const LONG_TARGET_MAX_KB = 650;
+/** 기본 JPEG 품질 및 용량 초과 시 단계적 하향 품질 표 */
+const DEFAULT_NORMAL_QUALITY = 0.8;
+const NORMAL_QUALITY_FALLBACK_STEPS = [0.72, 0.64] as const;
+const LONG_QUALITY_STEPS = [0.76, 0.68, 0.6] as const;
+
+function estimateDataUrlSizeKb(dataUrl: string): number {
+  const base64Length = dataUrl.split(',')[1]?.length || 0;
+  return Math.max(1, Math.round((base64Length * 3) / 4 / 1024));
+}
+
 /**
- * 클라이언트 단 Canvas API를 사용하여 영수증 이미지를 적정 해상도(최대 폭 1200px, JPEG 품질 0.8)로 자동 리사이징합니다.
+ * 종횡비에 따라 가독성(가로 폭)과 Canvas 메모리·로컬 스토리지 안전 한도를
+ * 함께 만족하는 리사이징 크기를 계산합니다.
+ */
+function computeAdaptiveDimensions(
+  naturalWidth: number,
+  naturalHeight: number,
+  requestedMaxWidth: number
+): { width: number; height: number; isLongReceipt: boolean } {
+  const safeWidth = Math.max(1, naturalWidth);
+  const safeHeight = Math.max(1, naturalHeight);
+  const aspect = safeHeight / safeWidth;
+  const isLongReceipt = aspect > LONG_RECEIPT_ASPECT_THRESHOLD;
+
+  const widthCap = isLongReceipt
+    ? Math.min(requestedMaxWidth, LONG_RECEIPT_MAX_WIDTH_PX)
+    : requestedMaxWidth;
+
+  let targetWidth = safeWidth;
+  let targetHeight = safeHeight;
+
+  if (targetWidth > widthCap) {
+    const ratio = widthCap / targetWidth;
+    targetWidth = widthCap;
+    targetHeight = targetHeight * ratio;
+  }
+
+  if (targetHeight > MAX_CANVAS_HEIGHT_PX) {
+    const ratio = MAX_CANVAS_HEIGHT_PX / targetHeight;
+    targetHeight = MAX_CANVAS_HEIGHT_PX;
+    targetWidth = targetWidth * ratio;
+  }
+
+  const totalPixels = targetWidth * targetHeight;
+  if (totalPixels > MAX_CANVAS_PIXELS) {
+    const scale = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+    targetWidth = targetWidth * scale;
+    targetHeight = targetHeight * scale;
+  }
+
+  return {
+    width: Math.max(1, Math.round(targetWidth)),
+    height: Math.max(1, Math.round(targetHeight)),
+    isLongReceipt,
+  };
+}
+
+/**
+ * 목표 용량(KB) 이내로 들어올 때까지 해상도는 유지한 채 JPEG 품질만 단계적으로 조절합니다.
+ */
+function encodeAdaptiveJpeg(
+  canvas: HTMLCanvasElement,
+  isLongReceipt: boolean,
+  requestedQuality: number
+): { dataUrl: string; sizeKb: number } {
+  const targetMaxKb = isLongReceipt ? LONG_TARGET_MAX_KB : NORMAL_TARGET_MAX_KB;
+  const candidateSteps = isLongReceipt
+    ? LONG_QUALITY_STEPS.map((step) => Math.min(requestedQuality, step))
+    : [
+        requestedQuality,
+        ...NORMAL_QUALITY_FALLBACK_STEPS.filter((step) => step < requestedQuality),
+      ];
+
+  const uniqueSteps = Array.from(new Set(candidateSteps));
+  let bestDataUrl = '';
+  let bestSizeKb = 0;
+
+  for (const q of uniqueSteps) {
+    const encoded = canvas.toDataURL('image/jpeg', q);
+    const sizeKb = estimateDataUrlSizeKb(encoded);
+    bestDataUrl = encoded;
+    bestSizeKb = sizeKb;
+    if (sizeKb <= targetMaxKb) {
+      break;
+    }
+  }
+
+  return { dataUrl: bestDataUrl, sizeKb: bestSizeKb };
+}
+
+/**
+ * 클라이언트 단 Canvas API를 사용하여 영수증 이미지를 종횡비 적응형으로 리사이징·압축합니다.
+ * - 일반 영수증(세로/가로 <= 2.2): 최대 폭 1200px, 품질 0.80, 목표 350KB
+ * - 긴 영수증(세로/가로 > 2.2): 최대 폭 1000px + 8MP/8000px 가드, 목표 650KB (품질 0.76 -> 0.68 -> 0.60)
  */
 export function compressReceiptImage(
   file: File,
-  maxWidth = 1200,
-  quality = 0.8
+  maxWidth = DEFAULT_MAX_WIDTH_PX,
+  quality = DEFAULT_NORMAL_QUALITY
 ): Promise<CompressedImageResult> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -26,14 +131,13 @@ export function compressReceiptImage(
       const img = new Image();
       img.onerror = () => reject(new Error('이미지 디코딩에 실패했습니다.'));
       img.onload = () => {
-        let targetWidth = img.naturalWidth || img.width;
-        let targetHeight = img.naturalHeight || img.height;
-
-        if (targetWidth > maxWidth) {
-          const ratio = maxWidth / targetWidth;
-          targetWidth = maxWidth;
-          targetHeight = Math.round(targetHeight * ratio);
-        }
+        const naturalWidth = img.naturalWidth || img.width;
+        const naturalHeight = img.naturalHeight || img.height;
+        const {
+          width: targetWidth,
+          height: targetHeight,
+          isLongReceipt,
+        } = computeAdaptiveDimensions(naturalWidth, naturalHeight, maxWidth);
 
         const canvas = document.createElement('canvas');
         canvas.width = targetWidth;
@@ -50,9 +154,15 @@ export function compressReceiptImage(
         ctx.fillRect(0, 0, targetWidth, targetHeight);
         ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-        const base64Length = compressedDataUrl.split(',')[1]?.length || 0;
-        const sizeKb = Math.max(1, Math.round((base64Length * 3) / 4 / 1024));
+        const { dataUrl: compressedDataUrl, sizeKb } = encodeAdaptiveJpeg(
+          canvas,
+          isLongReceipt,
+          quality
+        );
+
+        // 대용량 Canvas GPU 버퍼 즉시 해제
+        canvas.width = 0;
+        canvas.height = 0;
 
         resolve({
           dataUrl: compressedDataUrl,

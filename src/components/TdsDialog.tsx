@@ -7,6 +7,8 @@ interface TdsDialogProps {
   title: string;
   subtitle?: string;
   variant?: 'bottom-sheet' | 'modal';
+  size?: 'default' | 'wide';
+  bodyClassName?: string;
   children: React.ReactNode;
 }
 
@@ -16,6 +18,8 @@ export const TdsDialog: React.FC<TdsDialogProps> = ({
   title,
   subtitle,
   variant = 'bottom-sheet',
+  size = 'default',
+  bodyClassName,
   children,
 }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -69,17 +73,32 @@ export const TdsDialog: React.FC<TdsDialogProps> = ({
     };
   }, [onClose]);
 
+  const dialogClassName =
+    size === 'wide'
+      ? 'tds-modal-wide no-print'
+      : variant === 'bottom-sheet'
+        ? 'tds-bottom-sheet no-print'
+        : 'tds-modal-sheet no-print';
+
   return (
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
-      className={variant === 'bottom-sheet' ? 'tds-bottom-sheet no-print' : 'tds-modal-sheet no-print'}
+      className={dialogClassName}
       {...({ closedby: 'any' } as React.DialogHTMLAttributes<HTMLDialogElement>)}
     >
-      <div className="flex flex-col max-h-[90dvh] bg-[#FFFFFF]">
-        {/* 바텀 시트 상단 핸들바 */}
-        {variant === 'bottom-sheet' && (
-          <div className="pt-3 pb-1 flex justify-center shrink-0">
+      <div
+        className={`flex flex-col bg-[#FFFFFF] ${
+          size === 'wide' ? 'max-h-[92dvh] h-[92dvh] md:h-auto' : 'max-h-[90dvh]'
+        }`}
+      >
+        {/* 바텀 시트 상단 핸들바 (wide 모드는 모바일 < md 에서만 바텀시트 형태이므로 md:hidden 적용) */}
+        {(variant === 'bottom-sheet' || size === 'wide') && (
+          <div
+            className={`pt-3 pb-1 flex justify-center shrink-0 ${
+              size === 'wide' ? 'md:hidden' : ''
+            }`}
+          >
             <div className="w-9 h-1 bg-[#D1D6DB] rounded-full" />
           </div>
         )}
@@ -105,7 +124,13 @@ export const TdsDialog: React.FC<TdsDialogProps> = ({
         </div>
 
         {/* 시트 스크롤 본문 */}
-        <div className="px-6 pb-7 overflow-y-auto flex-1">{children}</div>
+        <div
+          className={
+            bodyClassName ?? 'px-6 pb-7 overflow-y-auto flex-1'
+          }
+        >
+          {children}
+        </div>
       </div>
     </dialog>
   );

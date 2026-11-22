@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -10,9 +10,11 @@ import {
   FileSpreadsheet,
   Image as ImageIcon,
   Layers,
+  LayoutGrid,
   Maximize2,
   Minimize2,
   Printer,
+  Scissors,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
@@ -26,6 +28,14 @@ import {
   MOKJANG_SUBTYPE_LABELS,
   MokjangGroup,
   ProcessedTransaction,
+  ReceiptBookLayoutEntry,
+  ReceiptBookLayoutsMap,
+  ReceiptDensity,
+  ReceiptEditConfig,
+  ReceiptPageLayout,
+  ReceiptSegment,
+  SegmentGroupSlotRef,
+  SlotSegmentPlacement,
   Transaction,
 } from '../types/finance';
 import { compressReceiptImage } from '../utils/imageCompressor';
@@ -36,8 +46,35 @@ import {
   formatYearMonthKorean,
   numberToKoreanCurrency,
 } from '../utils/koreanCurrency';
+import {
+  evaluateSlotFit,
+  isLongReceipt,
+  RECEIPT_SLOT_GEOMETRY,
+} from '../utils/receiptGeometry';
+import {
+  addEmptyPage,
+  applyReceiptSplitToPages,
+  buildReceiptLayoutScopeKey,
+  buildTxSlotRenderMetaMap,
+  compactPages,
+  deriveLayoutForDensity,
+  getEffectiveTxAspectHW,
+  hasActiveReceiptSplit,
+  resetPagesOrder,
+  resolveReceiptBookPages,
+} from '../utils/receiptLayoutEngine';
+import {
+  buildSlotCompositeCacheKey,
+  ensureAllPrintSlicesReady,
+  renderSlotCompositeUrl,
+  revokeAllSliceUrls,
+  revokeUnusedSliceUrls,
+  SlotCompositeRenderArgs,
+} from '../utils/receiptSliceRenderer';
 import { CategoryBudgetAllocation } from '../utils/syncManager';
 import { A4ScalePreview } from './A4ScalePreview';
+import { ReceiptPlacementBoard } from './ReceiptPlacementBoard';
+import { ReceiptSplitEditor } from './ReceiptSplitEditor';
 
 interface PrintCenterViewProps {
   yearMonth: string;
@@ -54,13 +91,27 @@ interface PrintCenterViewProps {
   onUpdateSettings: (next: AppSettings) => void;
   onSelectTransaction: (tx: ProcessedTransaction) => void;
   onQuickSaveTransaction?: (tx: Transaction) => void;
+  receiptLayouts: ReceiptBookLayoutsMap;
+  onUpdateReceiptLayout: (
+    scopeKey: string,
+    entry: ReceiptBookLayoutEntry
+  ) => void;
 }
 
 type PrintOutputMode = 'both' | 'ledger_only' | 'receipts_only';
-type ReceiptDensity = 2 | 4;
 type ReceiptFitMode = 'contain' | 'width';
-type PrintScreenMode = 'mobile_inspector' | 'a4_preview';
-type InspectorFilter = 'all' | 'missing' | 'attached';
+type PrintScreenMode = 'mobile_inspector' | 'layout_board' | 'a4_preview';
+type InspectorFilter = 'all' | 'missing' | 'attached' | 'long';
+
+interface CompositeSlotDescriptor {
+  posKey: string;
+  cacheKey: string;
+  task: SlotCompositeRenderArgs;
+  segments: ReceiptSegment[];
+  placements: SlotSegmentPlacement[];
+}
+
+const SVG_VIEWBOX_SCALE = 10;
 
 export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
   yearMonth,
@@ -77,9 +128,11 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
   onUpdateSettings,
   onSelectTransaction,
   onQuickSaveTransaction,
+  receiptLayouts,
+  onUpdateReceiptLayout,
 }) => {
   const [outputMode, setOutputMode] = useState<PrintOutputMode>('both');
-  const [density, setDensity] = useState<ReceiptDensity>(4);
+  const [localDensity, setLocalDensity] = useState<ReceiptDensity>(4);
   const [fitMode, setFitMode] = useState<ReceiptFitMode>('contain');
   const [scanFilter, setScanFilter] = useState<boolean>(false);
   const [includeMissingSlots, setIncludeMissingSlots] = useState<boolean>(true);
@@ -87,7 +140,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     new Date().toISOString().slice(0, 10)
   );
 
-  // 모바일(< 860px)에서는 모바일 검수·편집 카드 피드가 기본값, 데스크톱에서는 A4 용지 미리보기가 기본값
+  // 모바일(< 860px)에서는 영수증 검수 피드 기본, 데스크톱에서는 A4 미리보기 기본
   const [screenMode, setScreenMode] = useState<PrintScreenMode>(() =>
     typeof window !== 'undefined' && window.innerWidth < 860
       ? 'mobile_inspector'
@@ -98,11 +151,63 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     useState<InspectorFilter>('all');
   const [isConfigExpanded, setIsConfigExpanded] = useState<boolean>(false);
   const [uploadingTxId, setUploadingTxId] = useState<string | null>(null);
+  const [isPreparingPrint, setIsPreparingPrint] = useState<boolean>(false);
+
+  // receiptMeta가 없는 레거시 영수증 이미지의 런타임 naturalWidth/Height 보강 캐시
+  const [runtimeImageDimensions, setRuntimeImageDimensions] = useState<
+    Record<string, { width: number; height: number }>
+  >({});
+
+  // 슬롯 위치(`${pageIdx}:${slotIdx}`)별 300 DPI 합성 Blob URL 상태
+  const [slotCompositeByPosition, setSlotCompositeByPosition] = useState<
+    Record<string, { url?: string; fallbackSvg?: boolean }>
+  >({});
+
+  // 영수증 분할·슬롯 배치 에디터 모달 상태
+  const [editorState, setEditorState] = useState<{
+    txId: string;
+    initialTab: 'cut' | 'place';
+  } | null>(null);
+
+  const printAreaRef = useRef<HTMLDivElement | null>(null);
+
+  const scopeKey = useMemo(
+    () => buildReceiptLayoutScopeKey(yearMonth, accountFilter),
+    [yearMonth, accountFilter]
+  );
+
+  const savedEntry = receiptLayouts[scopeKey];
+  const density: ReceiptDensity = savedEntry?.activeDensity ?? localDensity;
 
   const mokjangMap = useMemo(
     () => new Map(mokjangs.map((m) => [m.id, m])),
     [mokjangs]
   );
+
+  const transactionMap = useMemo(
+    () => new Map(processedTransactions.map((tx) => [tx.id, tx])),
+    [processedTransactions]
+  );
+
+  // tx.receiptMeta 우선 + 미존재 레거시 이미지는 onLoad 런타임 치수 폴백
+  const effectiveImageDimensions = useMemo(() => {
+    const merged: Record<string, { width: number; height: number }> = {
+      ...runtimeImageDimensions,
+    };
+    for (const tx of processedTransactions) {
+      if (
+        tx.receiptMeta &&
+        tx.receiptMeta.width > 0 &&
+        tx.receiptMeta.height > 0
+      ) {
+        merged[tx.id] = {
+          width: tx.receiptMeta.width,
+          height: tx.receiptMeta.height,
+        };
+      }
+    }
+    return merged;
+  }, [processedTransactions, runtimeImageDimensions]);
 
   const allExpenseEvidenceItems = useMemo(
     () => processedTransactions.filter((tx) => Boolean(tx.evidenceNo)),
@@ -117,13 +222,26 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
   const attachedReceiptCount =
     allExpenseEvidenceItems.length - missingReceiptCount;
 
-  const evidenceItems = useMemo(() => {
-    return processedTransactions.filter((tx) => {
-      if (!tx.evidenceNo) return false;
-      if (!includeMissingSlots && !tx.receiptImage) return false;
-      return true;
-    });
-  }, [processedTransactions, includeMissingSlots]);
+  const longReceiptTxIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tx of allExpenseEvidenceItems) {
+      if (!tx.receiptImage) continue;
+      const dim = effectiveImageDimensions[tx.id];
+      if (isLongReceipt(dim?.width, dim?.height, density)) {
+        ids.add(tx.id);
+      }
+    }
+    return ids;
+  }, [allExpenseEvidenceItems, effectiveImageDimensions, density]);
+
+  const longReceiptCount = longReceiptTxIds.size;
+
+  // 긴 영수증이 0건이 되면 필터 자동 복귀
+  useEffect(() => {
+    if (inspectorFilter === 'long' && longReceiptCount === 0) {
+      setInspectorFilter('all');
+    }
+  }, [inspectorFilter, longReceiptCount]);
 
   const filteredInspectorItems = useMemo(() => {
     if (inspectorFilter === 'missing') {
@@ -132,16 +250,146 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     if (inspectorFilter === 'attached') {
       return allExpenseEvidenceItems.filter((tx) => Boolean(tx.receiptImage));
     }
-    return allExpenseEvidenceItems;
-  }, [allExpenseEvidenceItems, inspectorFilter]);
-
-  const receiptPages = useMemo(() => {
-    const pages: ProcessedTransaction[][] = [];
-    for (let i = 0; i < evidenceItems.length; i += density) {
-      pages.push(evidenceItems.slice(i, i + density));
+    if (inspectorFilter === 'long') {
+      return allExpenseEvidenceItems.filter((tx) => longReceiptTxIds.has(tx.id));
     }
-    return pages.length > 0 ? pages : [[]];
-  }, [evidenceItems, density]);
+    return allExpenseEvidenceItems;
+  }, [allExpenseEvidenceItems, inspectorFilter, longReceiptTxIds]);
+
+  const resolvedPages = useMemo(
+    () =>
+      resolveReceiptBookPages({
+        transactions: processedTransactions,
+        density,
+        includeMissingSlots,
+        savedEntry,
+        imageDimensions: effectiveImageDimensions,
+      }),
+    [
+      processedTransactions,
+      density,
+      includeMissingSlots,
+      savedEntry,
+      effectiveImageDimensions,
+    ]
+  );
+
+  const slotMetaMap = useMemo(
+    () => buildTxSlotRenderMetaMap(resolvedPages),
+    [resolvedPages]
+  );
+
+  // 모든 segment_group 슬롯에 대한 300 DPI 합성 작업 명세 생성
+  const compositeDescriptors = useMemo<CompositeSlotDescriptor[]>(() => {
+    const list: CompositeSlotDescriptor[] = [];
+
+    resolvedPages.forEach((page, pageIdx) => {
+      page.slots.forEach((slot, slotIdx) => {
+        if (slot.kind !== 'segment_group') return;
+        const tx = transactionMap.get(slot.txId);
+        if (!tx?.receiptImage || !tx.receiptEdit?.segments?.length) return;
+
+        const segMap = new Map(tx.receiptEdit.segments.map((s) => [s.id, s]));
+        const groupSegments = slot.segmentIds
+          .map((id) => segMap.get(id))
+          .filter((s): s is ReceiptSegment => Boolean(s));
+        if (groupSegments.length === 0) return;
+
+        const origAspectHW = getEffectiveTxAspectHW(
+          tx,
+          effectiveImageDimensions
+        );
+        const placements: SlotSegmentPlacement[] =
+          slot.layoutMode === 'custom' &&
+          slot.placements &&
+          slot.placements.length > 0
+            ? slot.placements
+            : evaluateSlotFit(groupSegments, origAspectHW, density).placements;
+
+        const posKey = `${pageIdx}:${slotIdx}`;
+        const meta = slotMetaMap.get(posKey);
+        const task: SlotCompositeRenderArgs = {
+          txId: tx.id,
+          evidenceNo: tx.evidenceNo,
+          src: tx.receiptImage,
+          segments: tx.receiptEdit.segments,
+          placements,
+          density,
+          scanFilter,
+          slotIndex: meta?.slotIndexOfTx ?? 0,
+          slotTotal: meta?.slotTotalOfTx ?? 1,
+          startPieceNumber: meta?.startPieceNumber ?? 1,
+        };
+
+        list.push({
+          posKey,
+          cacheKey: buildSlotCompositeCacheKey(task),
+          task,
+          segments: tx.receiptEdit.segments,
+          placements,
+        });
+      });
+    });
+
+    return list;
+  }, [
+    resolvedPages,
+    transactionMap,
+    effectiveImageDimensions,
+    density,
+    scanFilter,
+    slotMetaMap,
+  ]);
+
+  const compositeDescriptorByPos = useMemo(
+    () => new Map(compositeDescriptors.map((d) => [d.posKey, d])),
+    [compositeDescriptors]
+  );
+
+  // 배치 편집 / A4 미리보기 진입 시 300 DPI 슬롯 합성 Blob URL 온디맨드 생성
+  useEffect(() => {
+    if (screenMode === 'mobile_inspector') return;
+
+    let cancelled = false;
+    const activeKeys = new Set(compositeDescriptors.map((d) => d.cacheKey));
+
+    const run = async () => {
+      if (compositeDescriptors.length === 0) {
+        setSlotCompositeByPosition({});
+        revokeUnusedSliceUrls(activeKeys, 'slot|');
+        return;
+      }
+
+      const nextMap: Record<string, { url?: string; fallbackSvg?: boolean }> =
+        {};
+      for (const desc of compositeDescriptors) {
+        if (cancelled) return;
+        const res = await renderSlotCompositeUrl(desc.task);
+        if (cancelled) return;
+        nextMap[desc.posKey] = {
+          url: res.url,
+          fallbackSvg: res.fallbackSvg,
+        };
+      }
+
+      if (!cancelled) {
+        setSlotCompositeByPosition(nextMap);
+        revokeUnusedSliceUrls(activeKeys, 'slot|');
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [screenMode, compositeDescriptors]);
+
+  // 언마운트 시 모든 슬라이스 Blob URL 결정적 회수
+  useEffect(() => {
+    return () => {
+      revokeAllSliceUrls();
+    };
+  }, []);
 
   // 관/항(카테고리)별 지출 소계 + 연간 예산안 연동 월평균 예산 대비 집행률 집계
   const categoryBreakdown = useMemo(() => {
@@ -178,6 +426,185 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
         ? 'py-1.5 px-2 text-[11px]'
         : 'py-2 px-2.5 text-[11.5px]';
 
+  const commitDensityPages = (
+    nextPages: ReceiptPageLayout[],
+    targetDensity: ReceiptDensity = density
+  ) => {
+    const now = new Date().toISOString();
+    const prevDensityLayout = savedEntry?.byDensity?.[targetDensity];
+    const nextEntry: ReceiptBookLayoutEntry = {
+      version: 1,
+      activeDensity: targetDensity,
+      byDensity: {
+        ...savedEntry?.byDensity,
+        [targetDensity]: {
+          density: targetDensity,
+          pages: nextPages,
+          unplaced: prevDensityLayout?.unplaced,
+          updatedAt: now,
+        },
+      },
+      updatedAt: now,
+    };
+    onUpdateReceiptLayout(scopeKey, nextEntry);
+  };
+
+  const handleDensityChange = (nextDensity: ReceiptDensity) => {
+    setLocalDensity(nextDensity);
+    if (nextDensity === density && savedEntry?.activeDensity === nextDensity) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const existingTarget = savedEntry?.byDensity?.[nextDensity];
+    const currentSource = savedEntry?.byDensity?.[density];
+
+    const nextByDensity = { ...savedEntry?.byDensity };
+    if (!existingTarget && currentSource) {
+      nextByDensity[nextDensity] = deriveLayoutForDensity({
+        transactions: processedTransactions,
+        targetDensity: nextDensity,
+        sourceLayout: currentSource,
+        includeMissingSlots,
+        imageDimensions: effectiveImageDimensions,
+      });
+    }
+
+    onUpdateReceiptLayout(scopeKey, {
+      version: 1,
+      activeDensity: nextDensity,
+      byDensity: nextByDensity,
+      updatedAt: now,
+    });
+  };
+
+  const handleRecordImageDimensions = (
+    txId: string,
+    e: React.SyntheticEvent<HTMLImageElement>
+  ) => {
+    const img = e.currentTarget;
+    const width = img.naturalWidth;
+    const height = img.naturalHeight;
+    if (width <= 0 || height <= 0) return;
+
+    setRuntimeImageDimensions((prev) => {
+      const existing = prev[txId];
+      if (existing && existing.width === width && existing.height === height) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [txId]: { width, height },
+      };
+    });
+  };
+
+  const handleOpenSplitEditor = (
+    tx: ProcessedTransaction,
+    initialTab: 'cut' | 'place' = 'cut'
+  ) => {
+    if (!tx.receiptImage) return;
+    setEditorState({ txId: tx.id, initialTab });
+  };
+
+  const editingTransaction = useMemo(() => {
+    if (!editorState) return null;
+    return transactionMap.get(editorState.txId) ?? null;
+  }, [editorState, transactionMap]);
+
+  const editingInitialSlotGroups = useMemo<SegmentGroupSlotRef[]>(() => {
+    if (!editingTransaction) return [];
+    const groups: SegmentGroupSlotRef[] = [];
+    for (const page of resolvedPages) {
+      for (const slot of page.slots) {
+        if (
+          slot.kind === 'segment_group' &&
+          slot.txId === editingTransaction.id
+        ) {
+          groups.push(slot);
+        }
+      }
+    }
+    return groups;
+  }, [editingTransaction, resolvedPages]);
+
+  const handleApplySplitEditor = (result: {
+    txId: string;
+    receiptEdit: ReceiptEditConfig | undefined;
+    slotGroups: SegmentGroupSlotRef[];
+  }) => {
+    const targetTx = transactionMap.get(result.txId);
+    if (targetTx && onQuickSaveTransaction) {
+      const { evidenceNo: _ev, runningBalance: _rb, ...rawTx } = targetTx;
+      onQuickSaveTransaction({
+        ...rawTx,
+        receiptEdit: result.receiptEdit,
+      });
+    }
+
+    const nextPages = applyReceiptSplitToPages({
+      pages: resolvedPages,
+      density,
+      txId: result.txId,
+      nextReceiptEdit: result.receiptEdit,
+      nextSlotGroups: result.slotGroups,
+    });
+    commitDensityPages(nextPages, density);
+    setEditorState(null);
+  };
+
+  const handleCompactPages = () => {
+    commitDensityPages(compactPages(resolvedPages, density), density);
+  };
+
+  const handleResetPagesOrder = () => {
+    const reset = resetPagesOrder({
+      transactions: processedTransactions,
+      density,
+      includeMissingSlots,
+      imageDimensions: effectiveImageDimensions,
+    });
+    commitDensityPages(reset, density);
+  };
+
+  const handleAddEmptyPage = () => {
+    commitDensityPages(addEmptyPage(resolvedPages, density), density);
+  };
+
+  /**
+   * 인쇄 동기화 게이트: 어느 탭(검수/배치/미리보기)에서 클릭해도
+   * 모든 300 DPI 슬롯 합성 Blob URL 생성 + React DOM 커밋(2×rAF) + img.decode() 완료 후 인쇄 호출
+   */
+  const handlePrint = async () => {
+    if (isPreparingPrint) return;
+    setIsPreparingPrint(true);
+    try {
+      if (compositeDescriptors.length > 0) {
+        const renderedByKey = await ensureAllPrintSlicesReady(
+          compositeDescriptors.map((d) => d.task),
+          null
+        );
+        const nextMap: Record<string, { url?: string; fallbackSvg?: boolean }> =
+          {};
+        for (const desc of compositeDescriptors) {
+          const hit = renderedByKey[desc.cacheKey];
+          if (hit) {
+            nextMap[desc.posKey] = {
+              url: hit.url,
+              fallbackSvg: hit.fallbackSvg,
+            };
+          }
+        }
+        setSlotCompositeByPosition(nextMap);
+      }
+
+      await ensureAllPrintSlicesReady([], printAreaRef.current);
+      window.print();
+    } finally {
+      setIsPreparingPrint(false);
+    }
+  };
+
   const handleRoleChange = (idx: 0 | 1 | 2 | 3, val: string) => {
     const nextRoles: [string, string, string, string] = [
       ...settings.approvalRoles,
@@ -208,7 +635,17 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
       onQuickSaveTransaction({
         ...rawTx,
         receiptImage: compressed.dataUrl,
+        receiptDriveUrl: undefined,
+        receiptMeta: compressed.meta,
+        receiptEdit: undefined,
       });
+      setRuntimeImageDimensions((prev) => ({
+        ...prev,
+        [tx.id]: {
+          width: compressed.meta.width,
+          height: compressed.meta.height,
+        },
+      }));
     } catch (err) {
       console.error('영수증 즉시 압축 실패:', err);
     } finally {
@@ -228,12 +665,71 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
     });
   };
 
+  const renderFallbackSvgSlot = (
+    tx: ProcessedTransaction,
+    descriptor: CompositeSlotDescriptor
+  ) => {
+    if (!tx.receiptImage) return null;
+    const geom = RECEIPT_SLOT_GEOMETRY[density];
+    const vbW = Math.round(geom.widthMm * SVG_VIEWBOX_SCALE);
+    const vbH = Math.round(geom.heightMm * SVG_VIEWBOX_SCALE);
+    const dim = effectiveImageDimensions[tx.id];
+    const natW = dim?.width || 1000;
+    const natH = dim?.height || 1400;
+    const segById = new Map(descriptor.segments.map((s) => [s.id, s]));
+
+    const orderedPlacements = descriptor.placements
+      .map((p, idx) => ({ p, idx }))
+      .sort((a, b) => (a.p.z ?? a.idx) - (b.p.z ?? b.idx));
+
+    return (
+      <svg
+        viewBox={`0 0 ${vbW} ${vbH}`}
+        preserveAspectRatio="xMidYMid meet"
+        className={`w-full h-full ${scanFilter ? 'receipt-scan-filter' : ''}`}
+      >
+        <rect x={0} y={0} width={vbW} height={vbH} fill="#FFFFFF" />
+        {orderedPlacements.map(({ p }) => {
+          const seg = segById.get(p.segmentId);
+          if (!seg) return null;
+          const xStart = seg.xStart ?? 0;
+          const xEnd = seg.xEnd ?? 1;
+          const sx = xStart * natW;
+          const sy = seg.yStart * natH;
+          const sw = Math.max(1, (xEnd - xStart) * natW);
+          const sh = Math.max(1, (seg.yEnd - seg.yStart) * natH);
+          return (
+            <svg
+              key={p.segmentId}
+              x={p.x * vbW}
+              y={p.y * vbH}
+              width={p.w * vbW}
+              height={p.h * vbH}
+              viewBox={`${sx} ${sy} ${sw} ${sh}`}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <image
+                href={tx.receiptImage}
+                x={0}
+                y={0}
+                width={natW}
+                height={natH}
+              />
+            </svg>
+          );
+        })}
+      </svg>
+    );
+  };
+
   const yearMonthTitle = formatYearMonthKorean(yearMonth);
+  const receiptPageCount = resolvedPages.length;
+  const hasAnyReceiptEvidence = allExpenseEvidenceItems.length > 0;
 
   return (
     <div className="space-y-5 pb-28 print-container">
       {/* =====================================================================
-          1. 상단 컨트롤 & 모드 전환 바 (@media print 시 완벽 숨김: .no-print)
+          1. 상단 컨트롤 & 3단 모드 전환 바 (@media print 시 완벽 숨김: .no-print)
          ===================================================================== */}
       <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -243,76 +739,118 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
 
           <button
             type="button"
-            onClick={() => window.print()}
-            className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-semibold flex items-center justify-center gap-2 shrink-0 active:scale-[0.97] transition-all duration-150"
+            disabled={isPreparingPrint}
+            onClick={() => void handlePrint()}
+            className="h-11 px-5 rounded-2xl bg-[#3182F6] text-[#FFFFFF] text-[14px] font-semibold flex items-center justify-center gap-2 shrink-0 active:scale-[0.97] transition-all duration-150 disabled:opacity-60"
           >
             <Printer className="w-4 h-4" />
-            인쇄 / PDF 저장
+            {isPreparingPrint ? '인쇄 준비 중...' : '인쇄 / PDF 저장'}
           </button>
         </div>
 
-        {/* 화면 모드 전환 탭 */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-[#F9FAFB] p-2.5 rounded-2xl">
-          <div className="bg-[#E5E8EB] p-1 rounded-xl grid grid-cols-2 gap-1 flex-1">
+        {/* 3단 화면 모드 전환 탭 + 상시 노출 1행2열 / 2행2열 토글 */}
+        <div className="flex flex-col gap-2.5 bg-[#F9FAFB] p-2.5 rounded-2xl">
+          <div className="bg-[#E5E8EB] p-1 rounded-xl grid grid-cols-3 gap-1">
             <button
               type="button"
               onClick={() => setScreenMode('mobile_inspector')}
-              className={`py-2.5 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
                 screenMode === 'mobile_inspector'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <Smartphone className="w-4 h-4 shrink-0" />
-              <span>
+              <span className="truncate">
                 영수증 검수 ({allExpenseEvidenceItems.length})
               </span>
             </button>
 
             <button
               type="button"
+              onClick={() => setScreenMode('layout_board')}
+              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+                screenMode === 'layout_board'
+                  ? 'bg-[#FFFFFF] text-[#3182F6]'
+                  : 'text-[#4E5968] hover:text-[#191F28]'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4 shrink-0" />
+              <span className="truncate">배치 편집</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setScreenMode('a4_preview')}
-              className={`py-2.5 px-3 rounded-lg text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
+              className={`py-2.5 px-2.5 rounded-lg text-[12.5px] sm:text-[13px] font-bold flex items-center justify-center gap-1.5 transition-all duration-150 active:scale-[0.97] ${
                 screenMode === 'a4_preview'
                   ? 'bg-[#FFFFFF] text-[#3182F6]'
                   : 'text-[#4E5968] hover:text-[#191F28]'
               }`}
             >
               <Eye className="w-4 h-4 shrink-0" />
-              <span>A4 미리보기</span>
+              <span className="truncate">A4 미리보기</span>
             </button>
           </div>
 
-          {screenMode === 'a4_preview' && (
-            <button
-              type="button"
-              onClick={() =>
-                setA4ZoomMode((prev) => (prev === 'fit' ? 'actual' : 'fit'))
-              }
-              className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
-            >
-              {a4ZoomMode === 'fit' ? (
-                <>
-                  <Maximize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>화면 맞춤 (100% 보기)</span>
-                </>
-              ) : (
-                <>
-                  <Minimize2 className="w-3.5 h-3.5 text-[#3182F6]" />
-                  <span>100% 크기 (화면 맞춤)</span>
-                </>
-              )}
-            </button>
-          )}
+          {/* 상단 승격: 1행2열(2칸) / 2행2열(4칸) 밀도 전환 + A4 줌 토글 */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1 bg-[#FFFFFF] p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => handleDensityChange(2)}
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                  density === 2
+                    ? 'bg-[#191F28] text-[#FFFFFF]'
+                    : 'text-[#4E5968] hover:text-[#191F28]'
+                }`}
+              >
+                1행2열 (2칸)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDensityChange(4)}
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all duration-150 active:scale-[0.97] ${
+                  density === 4
+                    ? 'bg-[#191F28] text-[#FFFFFF]'
+                    : 'text-[#4E5968] hover:text-[#191F28]'
+                }`}
+              >
+                2행2열 (4칸)
+              </button>
+            </div>
+
+            {screenMode === 'a4_preview' && (
+              <button
+                type="button"
+                onClick={() =>
+                  setA4ZoomMode((prev) => (prev === 'fit' ? 'actual' : 'fit'))
+                }
+                className="px-3.5 py-2 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 shrink-0 active:scale-[0.97] transition-all duration-150"
+              >
+                {a4ZoomMode === 'fit' ? (
+                  <>
+                    <Maximize2 className="w-3.5 h-3.5 text-[#3182F6]" />
+                    <span>화면 맞춤 (100% 보기)</span>
+                  </>
+                ) : (
+                  <>
+                    <Minimize2 className="w-3.5 h-3.5 text-[#3182F6]" />
+                    <span>100% 크기 (화면 맞춤)</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* 출력 문서 구성 선택 (언제나 빠르게 선택 가능) */}
+        {/* 출력 문서 구성 선택 */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           {[
             {
               id: 'both',
               label: '세트 전체 출력',
-              sub: `장부 1장 + 영수증철 ${receiptPages.length}장`,
+              sub: `장부 1장 + 영수증철 ${receiptPageCount}장`,
             },
             {
               id: 'ledger_only',
@@ -322,7 +860,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             {
               id: 'receipts_only',
               label: '2. 영수증 증빙철만',
-              sub: `증빙 첨부지 (A4 ${receiptPages.length}장)`,
+              sub: `증빙 첨부지 (A4 ${receiptPageCount}장)`,
             },
           ].map((opt) => {
             const active = outputMode === opt.id;
@@ -350,7 +888,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
           })}
         </div>
 
-        {/* 인쇄 레이아웃 & 결재란 상세 설정 아코디언 (모바일 화면 공간 절약) */}
+        {/* 인쇄 옵션 & 결재란 상세 설정 아코디언 */}
         <div className="bg-[#F9FAFB] rounded-2xl p-4 space-y-3">
           <button
             type="button"
@@ -360,7 +898,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-[#3182F6]" />
               <span className="text-[13px] font-bold text-[#191F28]">
-                영수증 배치({density}분할) · 스캔 필터 · 결재선 직분 설정
+                스캔 보정 · 미첨부 공란 · 결재선 직분 설정
               </span>
             </div>
             <span className="px-2.5 py-1 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1 shrink-0">
@@ -380,57 +918,14 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
 
           {isConfigExpanded && (
             <div className="space-y-4 pt-3 border-t border-[#E5E8EB]">
-              {/* 영수증 증빙철 레이아웃 & 이미지 옵션 */}
+              {/* 이미지 보정 & 공란 옵션 */}
               <div className="space-y-2.5">
                 <div className="flex items-center gap-1.5 text-[12.5px] font-bold text-[#4E5968]">
                   <ImageIcon className="w-4 h-4 text-[#3182F6]" />
-                  영수증 증빙철 레이아웃 & 이미지 보정
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDensity(2)}
-                    className={`p-2.5 rounded-xl text-left transition-all duration-150 active:scale-[0.97] ${
-                      density === 2
-                        ? 'bg-[#191F28] text-[#FFFFFF]'
-                        : 'bg-[#FFFFFF] text-[#4E5968]'
-                    }`}
-                  >
-                    <div className="text-[12.5px] font-bold">
-                      A4 1장당 2개 (좌우 2열)
-                    </div>
-                    <div
-                      className={`text-[11px] ${
-                        density === 2 ? 'text-[#FFFFFF]/80' : 'text-[#8B95A1]'
-                      }`}
-                    >
-                      긴 마트·모바일 영수증용
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDensity(4)}
-                    className={`p-2.5 rounded-xl text-left transition-all duration-150 active:scale-[0.97] ${
-                      density === 4
-                        ? 'bg-[#191F28] text-[#FFFFFF]'
-                        : 'bg-[#FFFFFF] text-[#4E5968]'
-                    }`}
-                  >
-                    <div className="text-[12.5px] font-bold">
-                      A4 1장당 4개 (2×2 격자)
-                    </div>
-                    <div
-                      className={`text-[11px] ${
-                        density === 4 ? 'text-[#FFFFFF]/80' : 'text-[#8B95A1]'
-                      }`}
-                    >
-                      표준 영수증 절약 인쇄용
-                    </div>
-                  </button>
+                  영수증 이미지 보정 및 출력 옵션
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() =>
@@ -441,7 +936,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                     className="px-3 py-1.5 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.97] transition-all duration-150"
                   >
                     <Layers className="w-3.5 h-3.5 text-[#3182F6]" />
-                    피팅:{' '}
+                    일반 피팅:{' '}
                     {fitMode === 'contain'
                       ? '원본 비율 전체보기'
                       : '폭 맞춤 확대보기'}
@@ -563,7 +1058,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
       </section>
 
       {/* =====================================================================
-          모드 A: 모바일 친화적 영수증 증빙 카드 검수·편집 피드 (가로 스크롤 ZERO)
+          모드 A: 영수증 검수 카드 피드 (긴 영수증 자동 감지 · 분할 진입)
          ===================================================================== */}
       {screenMode === 'mobile_inspector' && (
         <div className="no-print max-w-[980px] mx-auto space-y-4">
@@ -621,16 +1116,24 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
               {[
                 {
                   id: 'all',
-                  label: `전체 지출 증빙 (${allExpenseEvidenceItems.length})`,
+                  label: `전체 (${allExpenseEvidenceItems.length})`,
                 },
                 {
                   id: 'missing',
-                  label: `⚠️ 영수증 미첨부 (${missingReceiptCount})`,
+                  label: `미첨부 (${missingReceiptCount})`,
                 },
                 {
                   id: 'attached',
-                  label: `✅ 영수증 첨부됨 (${attachedReceiptCount})`,
+                  label: `첨부됨 (${attachedReceiptCount})`,
                 },
+                ...(longReceiptCount > 0
+                  ? [
+                      {
+                        id: 'long',
+                        label: `긴 영수증 (${longReceiptCount})`,
+                      },
+                    ]
+                  : []),
               ].map((tab) => {
                 const active = inspectorFilter === tab.id;
                 return (
@@ -653,17 +1156,17 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
             </div>
           </section>
 
-          {/* 2. 모바일 영수증 증빙 카드 리스트 (#01 ~ #N) */}
+          {/* 2. 영수증 증빙 카드 리스트 (#01 ~ #N) */}
           {filteredInspectorItems.length === 0 ? (
             <div className="bg-[#FFFFFF] rounded-3xl p-10 text-center space-y-2">
               <CheckCircle2 className="w-9 h-9 text-[#3182F6] mx-auto" />
               <div className="text-[15px] font-bold text-[#191F28]">
                 {inspectorFilter === 'missing'
-                  ? '모든 지출 내역에 영수증이 첨부되어 있습니다!'
-                  : '표시할 지출 증빙 내역이 없습니다.'}
+                  ? '모든 지출 내역에 영수증이 첨부되어 있습니다'
+                  : '표시할 지출 증빙 내역이 없습니다'}
               </div>
               <div className="text-[13px] text-[#8B95A1]">
-                하단 [A4 미리보기] 또는 [인쇄/PDF] 버튼을 눌러 결산서를 출력하세요.
+                상단 [배치 편집] 또는 [A4 미리보기]에서 출력 구성을 확인하세요.
               </div>
             </div>
           ) : (
@@ -673,13 +1176,16 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                   ? mokjangMap.get(tx.mokjangId)
                   : undefined;
                 const isUploading = uploadingTxId === tx.id;
+                const isSplit = hasActiveReceiptSplit(tx);
+                const splitPieceCount = tx.receiptEdit?.segments?.length || 0;
+                const isLong = longReceiptTxIds.has(tx.id);
 
                 return (
                   <div
                     key={tx.id}
                     className="bg-[#FFFFFF] rounded-3xl p-5 flex flex-col justify-between space-y-3.5"
                   >
-                    {/* 상단 헤더: 증빙번호 + 날짜/카테고리 + 금액 */}
+                    {/* 상단 헤더 */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -714,24 +1220,45 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                       </div>
                     </div>
 
-                    {/* 영수증 이미지 프리뷰 또는 즉시 촬영/첨부 슬롯 */}
+                    {/* 영수증 이미지 프리뷰 또는 즉시 등록 */}
                     <div className="rounded-2xl bg-[#F9FAFB] overflow-hidden flex flex-col items-center justify-center min-h-[210px] p-3 relative">
                       {tx.receiptImage ? (
                         <div className="w-full flex flex-col items-center space-y-2.5">
+                          {/* 우상단 분할/긴 영수증 뱃지 */}
+                          {isSplit ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSplitEditor(tx, 'place')}
+                              className="absolute top-3 right-3 z-10 px-2.5 py-1 rounded-xl bg-[#191F28]/90 text-[#FFFFFF] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                            >
+                              <Scissors className="w-3 h-3" />
+                              <span>{splitPieceCount}조각 분할됨</span>
+                            </button>
+                          ) : isLong ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSplitEditor(tx, 'cut')}
+                              className="absolute top-3 right-3 z-10 px-2.5 py-1 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                            >
+                              <Scissors className="w-3 h-3" />
+                              <span>긴 영수증 · 분할</span>
+                            </button>
+                          ) : null}
+
                           <img
                             src={tx.receiptImage}
                             alt={`증빙 ${tx.evidenceNo}`}
+                            onLoad={(e) => handleRecordImageDimensions(tx.id, e)}
                             className={`max-h-[260px] w-full object-contain rounded-xl bg-[#FFFFFF] ${
                               scanFilter ? 'receipt-scan-filter' : ''
                             }`}
                           />
+
                           <div className="w-full flex items-center justify-between gap-2 pt-1">
                             <label className="flex-1 h-9 px-3 rounded-xl bg-[#FFFFFF] text-[#4E5968] text-[12px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.97]">
                               <Camera className="w-3.5 h-3.5 text-[#3182F6]" />
                               <span>
-                                {isUploading
-                                  ? '압축 저장 중...'
-                                  : '사진 바로 교체'}
+                                {isUploading ? '저장 중...' : '사진 교체'}
                               </span>
                               <input
                                 type="file"
@@ -748,11 +1275,29 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
 
                             <button
                               type="button"
+                              onClick={() =>
+                                handleOpenSplitEditor(
+                                  tx,
+                                  isSplit ? 'place' : 'cut'
+                                )
+                              }
+                              className={`h-9 px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1 active:scale-[0.97] ${
+                                isSplit || isLong
+                                  ? 'bg-[#3182F6] text-[#FFFFFF]'
+                                  : 'bg-[#FFFFFF] text-[#191F28]'
+                              }`}
+                            >
+                              <Scissors className="w-3.5 h-3.5" />
+                              <span>{isSplit ? '분할 수정' : '분할'}</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => onSelectTransaction(tx)}
                               className="h-9 px-3 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-bold flex items-center justify-center gap-1 active:scale-[0.97]"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
-                              <span>상세/AI 스캔</span>
+                              <span>상세</span>
                             </button>
                           </div>
                         </div>
@@ -765,9 +1310,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                             <label className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[12.5px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-[0.97]">
                               <Camera className="w-4 h-4" />
                               <span>
-                                {isUploading
-                                  ? '저장 중...'
-                                  : '사진 등록'}
+                                {isUploading ? '저장 중...' : '사진 등록'}
                               </span>
                               <input
                                 type="file"
@@ -820,29 +1363,30 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
           <div className="sticky bottom-4 z-20 bg-[#191F28] text-[#FFFFFF] rounded-2xl p-3.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] text-[#8B95A1]">
-                장부 1장 + 영수증철 {receiptPages.length}장
+                장부 1장 + 영수증철 {receiptPageCount}장
               </div>
               <div className="text-[14.5px] font-bold tabular-nums truncate">
-                증빙 {attachedReceiptCount}/{allExpenseEvidenceItems.length}건 첨부 완료
+                증빙 {attachedReceiptCount}/{allExpenseEvidenceItems.length}건 첨부
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => setScreenMode('a4_preview')}
-                className="h-10 px-3.5 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97]"
+                onClick={() => setScreenMode('layout_board')}
+                className="h-10 px-3 rounded-xl bg-[#FFFFFF]/15 text-[#FFFFFF] text-[12.5px] font-semibold flex items-center gap-1.5 active:scale-[0.97]"
               >
-                <Eye className="w-4 h-4" />
-                <span>A4 미리보기</span>
+                <LayoutGrid className="w-4 h-4" />
+                <span>배치</span>
               </button>
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 active:scale-[0.97]"
+                disabled={isPreparingPrint}
+                onClick={() => void handlePrint()}
+                className="h-10 px-4 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[13px] font-bold flex items-center gap-1.5 active:scale-[0.97] disabled:opacity-60"
               >
                 <Printer className="w-4 h-4" />
-                <span>인쇄/PDF</span>
+                <span>{isPreparingPrint ? '준비 중' : '인쇄/PDF'}</span>
               </button>
             </div>
           </div>
@@ -850,13 +1394,36 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
       )}
 
       {/* =====================================================================
-          모드 B & 실제 인쇄 DOM: 문서 1 (월별 회계 결산 보고서) + 문서 2 (영수증 증빙철)
-          - 화면에서 mobile_inspector 모드일 때는 숨겨지지만 @media print(.print-force-show) 시에는 항상 출력됨
-          - 화면에서 a4_preview 모드일 때는 모바일 화면 폭에 맞춰 자동 Scale-to-Fit 적용
+          모드 B: 자유 슬롯 배치 보드 (A4 격자 단위 스왑·빈 칸·배치 수정)
+         ===================================================================== */}
+      {screenMode === 'layout_board' && (
+        <div className="no-print max-w-[980px] mx-auto">
+          <ReceiptPlacementBoard
+            pages={resolvedPages}
+            density={density}
+            transactionMap={transactionMap}
+            imageDimensions={effectiveImageDimensions}
+            slotCompositeByPosition={slotCompositeByPosition}
+            scanFilter={scanFilter}
+            onChangePages={(nextPages: ReceiptPageLayout[]) =>
+              commitDensityPages(nextPages, density)
+            }
+            onOpenSplitEditor={handleOpenSplitEditor}
+            onCompact={handleCompactPages}
+            onResetOrder={handleResetPagesOrder}
+            onAddPage={handleAddEmptyPage}
+          />
+        </div>
+      )}
+
+      {/* =====================================================================
+          모드 C & 실제 인쇄 DOM: 문서 1 (결산 보고서) + 문서 2 (영수증 증빙철)
+          - 화면에서는 a4_preview 탭일 때만 노출, @media print 시(.print-force-show) 항상 출력
          ===================================================================== */}
       <div
+        ref={printAreaRef}
         className={`max-w-[980px] mx-auto space-y-6 print-force-show ${
-          screenMode === 'mobile_inspector' ? 'hidden' : 'block'
+          screenMode === 'a4_preview' ? 'block' : 'hidden'
         }`}
       >
         {/* 문서 1: 월별 회계 결산 보고서 (다중 페이지 자연 분할 지원) */}
@@ -975,7 +1542,8 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                 <div className="mt-3.5">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[11.5px] font-bold text-[#191F28]">
-                      2. 일자별 수입·지출 상세 명세 (증빙번호는 [문서 2: 영수증 증빙철]과 1:1 매칭)
+                      2. 일자별 수입·지출 상세 명세 (증빙번호는 [문서 2: 영수증
+                      증빙철]과 1:1 매칭)
                     </span>
                     <span className="text-[10.5px] text-[#8B95A1] tabular-nums">
                       단위: 원 (₩)
@@ -1123,7 +1691,7 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
                           {formatNumber(currentBalance)}
                         </td>
                         <td className="border border-[#191F28] py-2 px-1 text-center text-[10px] text-[#4E5968]">
-                          총 {evidenceItems.length}건
+                          총 {allExpenseEvidenceItems.length}건
                         </td>
                       </tr>
                     </tbody>
@@ -1164,7 +1732,8 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
 
               <div className="pt-3 mt-4 border-t border-[#E5E8EB] flex items-center justify-between text-[11px] text-[#4E5968] print-avoid-break">
                 <div>
-                  위와 같이 {yearMonthTitle} {settings.departmentName} 회계 결산 내역 및 별첨 영수증 증빙철을 보고합니다.
+                  위와 같이 {yearMonthTitle} {settings.departmentName} 회계 결산
+                  내역 및 별첨 영수증 증빙철을 보고합니다.
                 </div>
                 <div className="font-semibold text-[#191F28] tabular-nums">
                   문서 1 / 회계 결산 장부 (A4 1매)
@@ -1174,149 +1743,308 @@ export const PrintCenterView: React.FC<PrintCenterViewProps> = ({
           </A4ScalePreview>
         )}
 
-        {/* 문서 2: 월별 지출 증빙 영수증 첨부지 (A4 여러 장 자동 분할) */}
+        {/* 문서 2: 월별 지출 증빙 영수증 첨부지 (자유 슬롯 배치 · 1칸 최대 패킹 · 300 DPI 합성 출력) */}
         {(outputMode === 'both' || outputMode === 'receipts_only') &&
-          receiptPages.map((pageItems, pageIdx) => (
-            <A4ScalePreview key={pageIdx} zoomMode={a4ZoomMode}>
-              <article className="a4-page a4-page-receipt flex flex-col justify-between">
-                <div className="flex-1 flex flex-col">
-                  <div className="flex items-center justify-between pb-2.5 border-b-2 border-[#191F28] mb-3.5">
-                    <div>
-                      <div className="text-[10.5px] font-semibold text-[#4E5968]">
-                        [{settings.departmentName} 지출 증빙 서류 · 문서 2]
+          resolvedPages.map((page, pageIdx) => {
+            const isEmptyBook =
+              !hasAnyReceiptEvidence &&
+              page.slots.every((s) => s.kind === 'empty');
+
+            return (
+              <A4ScalePreview key={page.pageId} zoomMode={a4ZoomMode}>
+                <article className="a4-page a4-page-receipt flex flex-col justify-between">
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="flex items-center justify-between pb-2.5 border-b-2 border-[#191F28] mb-3.5 shrink-0">
+                      <div>
+                        <div className="text-[10.5px] font-semibold text-[#4E5968]">
+                          [{settings.departmentName} 지출 증빙 서류 · 문서 2]
+                        </div>
+                        <h2 className="text-[18px] font-bold text-[#191F28] tabular-nums">
+                          {yearMonthTitle} 청년부 지출 증빙 영수증 철 (Page{' '}
+                          {pageIdx + 1} / {receiptPageCount})
+                        </h2>
                       </div>
-                      <h2 className="text-[18px] font-bold text-[#191F28] tabular-nums">
-                        {yearMonthTitle} 청년부 지출 증빙 영수증 철 (Page{' '}
-                        {pageIdx + 1} / {receiptPages.length})
-                      </h2>
+
+                      <table className="border-collapse border border-[#191F28] text-center text-[10px] shrink-0 tabular-nums">
+                        <tbody>
+                          <tr className="bg-[#F2F4F6] font-bold">
+                            <td className="border border-[#191F28] px-2.5 py-0.5">
+                              회계담당
+                            </td>
+                            <td className="border border-[#191F28] px-2.5 py-0.5">
+                              부서장확인
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="border border-[#191F28] px-2.5 py-2 text-[#4E5968]">
+                              {settings.authorName} (인)
+                            </td>
+                            <td className="border border-[#191F28] px-2.5 py-2 text-[#8B95A1]">
+                              (서명/인)
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
 
-                    <table className="border-collapse border border-[#191F28] text-center text-[10px] shrink-0 tabular-nums">
-                      <tbody>
-                        <tr className="bg-[#F2F4F6] font-bold">
-                          <td className="border border-[#191F28] px-2.5 py-0.5">
-                            회계담당
-                          </td>
-                          <td className="border border-[#191F28] px-2.5 py-0.5">
-                            부서장확인
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="border border-[#191F28] px-2.5 py-2 text-[#4E5968]">
-                            {settings.authorName} (인)
-                          </td>
-                          <td className="border border-[#191F28] px-2.5 py-2 text-[#8B95A1]">
-                            (서명/인)
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {pageItems.length === 0 ? (
-                    <div className="flex-1 border border-dashed border-[#D1D6DB] rounded-2xl flex flex-col items-center justify-center text-center p-8">
-                      <FileSpreadsheet className="w-8 h-8 text-[#8B95A1] mb-2" />
-                      <div className="text-[14px] font-semibold text-[#4E5968]">
-                        해당 월에 등록된 지출 증빙 내역이 없습니다
+                    {isEmptyBook ? (
+                      <div className="flex-1 border border-dashed border-[#D1D6DB] rounded-2xl flex flex-col items-center justify-center text-center p-8">
+                        <FileSpreadsheet className="w-8 h-8 text-[#8B95A1] mb-2" />
+                        <div className="text-[14px] font-semibold text-[#4E5968]">
+                          해당 월에 등록된 지출 증빙 내역이 없습니다
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div
-                      className={`grid gap-3.5 flex-1 ${
-                        density === 2
-                          ? 'grid-cols-2'
-                          : 'grid-cols-2 grid-rows-2'
-                      }`}
-                    >
-                      {pageItems.map((tx) => {
-                        const slotCardHeightClass =
-                          density === 2 ? 'h-[236mm]' : 'h-[114mm]';
+                    ) : (
+                      <div
+                        className={`grid grid-cols-2 gap-3.5 flex-1 min-h-0 ${
+                          density === 2 ? 'grid-rows-1' : 'grid-rows-2'
+                        }`}
+                      >
+                        {page.slots.map((slot, slotIdx) => {
+                          const posKey = `${pageIdx}:${slotIdx}`;
 
-                        return (
-                          <div
-                            key={tx.id}
-                            className={`receipt-card ${slotCardHeightClass} border border-[#191F28] rounded-xl overflow-hidden flex flex-col justify-between bg-[#FFFFFF]`}
-                          >
-                            {/* 박스 상단 헤더 바 */}
-                            <div className="bg-[#F2F4F6] border-b border-[#191F28] px-2.5 py-1.5 flex items-start justify-between gap-2 tabular-nums shrink-0">
-                              <span className="px-1.5 py-0.5 rounded bg-[#191F28] text-[#FFFFFF] text-[10.5px] font-bold shrink-0 mt-0.5">
-                                [증빙 {tx.evidenceNo}]
-                              </span>
+                          // 1. 명시적 빈 칸 (인쇄 시 visibility: hidden으로 그리드 트랙 유지)
+                          if (slot.kind === 'empty') {
+                            return (
+                              <div
+                                key={`${page.pageId}-empty-${slotIdx}`}
+                                className="receipt-slot-empty h-full min-h-0 border border-dashed border-[#D1D6DB] rounded-xl bg-[#F9FAFB]/60 flex items-center justify-center text-[11.5px] font-semibold text-[#8B95A1]"
+                              >
+                                빈 칸
+                              </div>
+                            );
+                          }
 
-                              <span className="text-[10.5px] font-semibold text-[#191F28] flex-1 text-center whitespace-pre-wrap break-words [word-break:keep-all] leading-snug">
-                                {formatShortDate(tx.date)} | {tx.category}
-                                {tx.subCategory
-                                  ? ` › ${tx.subCategory}`
-                                  : ''}{' '}
-                                | {tx.title}
-                              </span>
+                          const tx = transactionMap.get(slot.txId);
+                          if (!tx) {
+                            return (
+                              <div
+                                key={`${page.pageId}-missing-tx-${slotIdx}`}
+                                className="receipt-slot-empty h-full min-h-0 rounded-xl"
+                              />
+                            );
+                          }
 
-                              <span className="text-[11.5px] font-bold text-[#191F28] shrink-0 mt-0.5">
-                                {formatWon(tx.amount)}
-                              </span>
-                            </div>
+                          const meta = slotMetaMap.get(posKey);
+                          const isOverflowMultiSlot =
+                            (meta?.slotTotalOfTx ?? 1) > 1;
+                          const isContinuationSlot =
+                            isOverflowMultiSlot &&
+                            (meta?.slotIndexOfTx ?? 0) > 0;
+                          const evidenceBadgeText = isOverflowMultiSlot
+                            ? `[증빙 ${tx.evidenceNo} (${(meta?.slotIndexOfTx ?? 0) + 1}/${meta?.slotTotalOfTx ?? 1})]`
+                            : `[증빙 ${tx.evidenceNo}]`;
 
-                            {/* 박스 본문 */}
-                            <div className="w-full flex-1 min-h-0 bg-[#FFFFFF] flex items-center justify-center p-2 overflow-hidden relative">
-                              {tx.receiptImage ? (
-                                <img
-                                  src={tx.receiptImage}
-                                  alt={`증빙 ${tx.evidenceNo} - ${tx.title}`}
-                                  className={`max-h-full ${
-                                    fitMode === 'contain'
-                                      ? 'w-full h-full object-contain'
-                                      : 'w-full h-full object-cover object-top'
-                                  } ${scanFilter ? 'receipt-scan-filter' : ''}`}
-                                />
-                              ) : (
-                                <div className="w-full h-full border border-dashed border-[#D1D6DB] rounded-lg flex flex-col items-center justify-center text-center p-4 bg-[#F9FAFB]">
-                                  <div className="text-[12px] font-bold text-[#F04452] mb-1">
-                                    [증빙 {tx.evidenceNo}] 디지털 영수증 미첨부
-                                  </div>
-                                  <div className="text-[11px] text-[#8B95A1] max-w-[200px] break-words [word-break:keep-all]">
-                                    인쇄 후 이 자리에 실물 종이 영수증을 풀로 부착하거나, 아래 버튼으로 사진을 업로드하세요.
-                                  </div>
+                          // 2. 분할 슬롯 (segment_group: 1칸 완결 또는 오버플로우)
+                          if (slot.kind === 'segment_group') {
+                            const composite = slotCompositeByPosition[posKey];
+                            const descriptor =
+                              compositeDescriptorByPos.get(posKey);
+
+                            return (
+                              <div
+                                key={`${page.pageId}-seg-${tx.id}-${slotIdx}`}
+                                className="receipt-card h-full min-h-0 border border-[#191F28] rounded-xl overflow-hidden flex flex-col justify-between bg-[#FFFFFF]"
+                              >
+                                {/* 박스 상단 헤더 바 */}
+                                <div className="bg-[#F2F4F6] border-b border-[#191F28] px-2.5 py-1.5 flex items-start justify-between gap-2 tabular-nums shrink-0">
+                                  <span className="px-1.5 py-0.5 rounded bg-[#191F28] text-[#FFFFFF] text-[10.5px] font-bold shrink-0 mt-0.5">
+                                    {evidenceBadgeText}
+                                  </span>
+
+                                  <span className="text-[10.5px] font-semibold text-[#191F28] flex-1 text-center whitespace-pre-wrap break-words [word-break:keep-all] leading-snug">
+                                    {formatShortDate(tx.date)} | {tx.category}
+                                    {tx.subCategory
+                                      ? ` › ${tx.subCategory}`
+                                      : ''}{' '}
+                                    | {tx.title}
+                                  </span>
+
+                                  <span
+                                    className={`text-[11.5px] font-bold shrink-0 mt-0.5 ${
+                                      isContinuationSlot
+                                        ? 'text-[#8B95A1] text-[10.5px]'
+                                        : 'text-[#191F28]'
+                                    }`}
+                                  >
+                                    {isContinuationSlot
+                                      ? '(이어짐)'
+                                      : formatWon(tx.amount)}
+                                  </span>
+                                </div>
+
+                                {/* 박스 본문: 300 DPI 단일 합성 Blob URL (항상 object-contain 강제) */}
+                                <div className="w-full flex-1 min-h-0 bg-[#FFFFFF] flex items-center justify-center p-2 overflow-hidden relative">
                                   <button
                                     type="button"
-                                    onClick={() => onSelectTransaction(tx)}
-                                    className="no-print mt-3 px-3 py-1.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                                    onClick={() =>
+                                      handleOpenSplitEditor(tx, 'place')
+                                    }
+                                    className="no-print absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#191F28]/80 text-[#FFFFFF] text-[10.5px] font-semibold flex items-center gap-1 hover:bg-[#191F28] active:scale-[0.97]"
                                   >
-                                    <Upload className="w-3.5 h-3.5" />
-                                    영수증 사진 지금 등록
+                                    <Scissors className="w-3 h-3" />
+                                    <span>배치 수정</span>
                                   </button>
+
+                                  {composite?.url ? (
+                                    <img
+                                      src={composite.url}
+                                      alt={`${evidenceBadgeText} - ${tx.title}`}
+                                      decoding="sync"
+                                      className="w-full h-full max-h-full object-contain"
+                                    />
+                                  ) : composite?.fallbackSvg && descriptor ? (
+                                    renderFallbackSvgSlot(tx, descriptor)
+                                  ) : (
+                                    <div className="text-[11px] text-[#8B95A1] font-medium">
+                                      영수증 조각 준비 중...
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
 
-                            {/* 박스 하단: 상세 메모/산출근거 표시 */}
-                            <div className="bg-[#F9FAFB] border-t border-[#E5E8EB] px-2.5 py-1.5 flex items-start justify-between gap-2 text-[10px] tabular-nums shrink-0">
-                              <span className="text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all] leading-snug flex-1">
-                                <strong>산출근거:</strong>{' '}
-                                {tx.memo || tx.title}
-                              </span>
-                              <span className="text-[#8B95A1] shrink-0">
-                                {tx.paymentMethod}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                                {/* 박스 하단 산출근거 */}
+                                <div className="bg-[#F9FAFB] border-t border-[#E5E8EB] px-2.5 py-1.5 flex items-start justify-between gap-2 text-[10px] tabular-nums shrink-0">
+                                  <span className="text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all] leading-snug flex-1">
+                                    <strong>산출근거:</strong>{' '}
+                                    {tx.memo || tx.title}
+                                  </span>
+                                  <span className="text-[#8B95A1] shrink-0">
+                                    {tx.paymentMethod}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }
 
-                <div className="pt-2.5 mt-2 border-t border-[#E5E8EB] flex items-center justify-between text-[10.5px] text-[#8B95A1] tabular-nums">
-                  <span>
-                    ※ 본 증빙철의 [증빙 #번호]는 {yearMonthTitle} 회계 결산 보고서(문서 1) 우측 끝 열의 번호와 일치합니다.
-                  </span>
-                  <span className="font-semibold text-[#4E5968]">
-                    Page {pageIdx + 1} of {receiptPages.length}
-                  </span>
-                </div>
-              </article>
-            </A4ScalePreview>
-          ))}
+                          // 3. 일반 영수증 또는 미첨부 공란 카드
+                          const isLongUnSplit =
+                            Boolean(tx.receiptImage) &&
+                            longReceiptTxIds.has(tx.id);
+
+                          return (
+                            <div
+                              key={`${page.pageId}-tx-${tx.id}-${slotIdx}`}
+                              className="receipt-card h-full min-h-0 border border-[#191F28] rounded-xl overflow-hidden flex flex-col justify-between bg-[#FFFFFF]"
+                            >
+                              {/* 박스 상단 헤더 바 */}
+                              <div className="bg-[#F2F4F6] border-b border-[#191F28] px-2.5 py-1.5 flex items-start justify-between gap-2 tabular-nums shrink-0">
+                                <span className="px-1.5 py-0.5 rounded bg-[#191F28] text-[#FFFFFF] text-[10.5px] font-bold shrink-0 mt-0.5">
+                                  [증빙 {tx.evidenceNo}]
+                                </span>
+
+                                <span className="text-[10.5px] font-semibold text-[#191F28] flex-1 text-center whitespace-pre-wrap break-words [word-break:keep-all] leading-snug">
+                                  {formatShortDate(tx.date)} | {tx.category}
+                                  {tx.subCategory
+                                    ? ` › ${tx.subCategory}`
+                                    : ''}{' '}
+                                  | {tx.title}
+                                </span>
+
+                                <span className="text-[11.5px] font-bold text-[#191F28] shrink-0 mt-0.5">
+                                  {formatWon(tx.amount)}
+                                </span>
+                              </div>
+
+                              {/* 박스 본문 */}
+                              <div className="w-full flex-1 min-h-0 bg-[#FFFFFF] flex items-center justify-center p-2 overflow-hidden relative">
+                                {tx.receiptImage ? (
+                                  <>
+                                    {isLongUnSplit && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleOpenSplitEditor(tx, 'cut')
+                                        }
+                                        className="no-print absolute top-2 right-2 z-10 px-2 py-1 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[10.5px] font-bold flex items-center gap-1 active:scale-[0.97]"
+                                      >
+                                        <Scissors className="w-3 h-3" />
+                                        <span>긴 영수증 · 분할</span>
+                                      </button>
+                                    )}
+                                    <img
+                                      src={tx.receiptImage}
+                                      alt={`증빙 ${tx.evidenceNo} - ${tx.title}`}
+                                      onLoad={(e) =>
+                                        handleRecordImageDimensions(tx.id, e)
+                                      }
+                                      className={`max-h-full ${
+                                        fitMode === 'contain'
+                                          ? 'w-full h-full object-contain'
+                                          : 'w-full h-full object-cover object-top'
+                                      } ${scanFilter ? 'receipt-scan-filter' : ''}`}
+                                    />
+                                  </>
+                                ) : (
+                                  <div className="w-full h-full border border-dashed border-[#D1D6DB] rounded-lg flex flex-col items-center justify-center text-center p-4 bg-[#F9FAFB]">
+                                    <div className="text-[12px] font-bold text-[#F04452] mb-1">
+                                      [증빙 {tx.evidenceNo}] 디지털 영수증 미첨부
+                                    </div>
+                                    <div className="text-[11px] text-[#8B95A1] max-w-[200px] break-words [word-break:keep-all]">
+                                      인쇄 후 이 자리에 실물 종이 영수증을 풀로
+                                      부착하거나, 아래 버튼으로 사진을
+                                      업로드하세요.
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectTransaction(tx)}
+                                      className="no-print mt-3 px-3 py-1.5 rounded-xl bg-[#3182F6] text-[#FFFFFF] text-[11.5px] font-semibold flex items-center gap-1 active:scale-[0.97] transition-all duration-150"
+                                    >
+                                      <Upload className="w-3.5 h-3.5" />
+                                      영수증 사진 지금 등록
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* 박스 하단: 상세 메모/산출근거 표시 */}
+                              <div className="bg-[#F9FAFB] border-t border-[#E5E8EB] px-2.5 py-1.5 flex items-start justify-between gap-2 text-[10px] tabular-nums shrink-0">
+                                <span className="text-[#4E5968] whitespace-pre-wrap break-words [word-break:keep-all] leading-snug flex-1">
+                                  <strong>산출근거:</strong>{' '}
+                                  {tx.memo || tx.title}
+                                </span>
+                                <span className="text-[#8B95A1] shrink-0">
+                                  {tx.paymentMethod}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-2.5 mt-2 border-t border-[#E5E8EB] flex items-center justify-between text-[10.5px] text-[#8B95A1] tabular-nums shrink-0">
+                    <span>
+                      ※ 본 증빙철의 [증빙 #번호]는 {yearMonthTitle} 회계 결산
+                      보고서(문서 1) 우측 끝 열의 번호와 일치합니다.
+                    </span>
+                    <span className="font-semibold text-[#4E5968]">
+                      Page {pageIdx + 1} of {receiptPageCount}
+                    </span>
+                  </div>
+                </article>
+              </A4ScalePreview>
+            );
+          })}
       </div>
+
+      {/* =====================================================================
+          영수증 다중 분할 & 슬롯 내 자유 배치 에디터 모달
+         ===================================================================== */}
+      <ReceiptSplitEditor
+        open={Boolean(editorState && editingTransaction)}
+        onClose={() => setEditorState(null)}
+        transaction={editingTransaction}
+        density={density}
+        initialSlotGroups={editingInitialSlotGroups}
+        initialTab={editorState?.initialTab ?? 'cut'}
+        imageDimension={
+          editingTransaction
+            ? effectiveImageDimensions[editingTransaction.id]
+            : undefined
+        }
+        onApply={handleApplySplitEditor}
+      />
     </div>
   );
 };

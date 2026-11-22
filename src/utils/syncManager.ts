@@ -8,6 +8,18 @@ import {
   MOKJANG_SUBTYPE_LABELS,
   MokjangGroup,
   ProcessedTransaction,
+  ReceiptBookLayoutEntry,
+  ReceiptBookLayoutsMap,
+  ReceiptDensity,
+  ReceiptDensityLayout,
+  ReceiptEditConfig,
+  ReceiptItemRef,
+  ReceiptMetadata,
+  ReceiptPageLayout,
+  ReceiptSegment,
+  ReceiptSlotRef,
+  SegmentGroupSlotRef,
+  SlotSegmentPlacement,
   Transaction,
 } from '../types/finance';
 import {
@@ -23,7 +35,377 @@ const STORAGE_KEYS = {
   BUDGETS: 'tds_youth_finance_budgets_v2',
   MOKJANGS: 'tds_youth_finance_mokjangs_v2',
   SETTINGS: 'tds_youth_finance_settings_v2',
+  RECEIPT_LAYOUTS: 'tds_youth_finance_receipt_layouts_v1',
 };
+
+const BACKUP_SCHEMA_VERSION = '3.1';
+const NORMALIZED_COORD_SCALE = 10000;
+const MIN_VALID_PLACEMENT_SIZE = 0.01;
+const MAX_NORMALIZED_BOUND_EPSILON = 1.001;
+
+function roundNormalizedCoord(value: number): number {
+  return Math.round(value * NORMALIZED_COORD_SCALE) / NORMALIZED_COORD_SCALE;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isValidDensity(value: unknown): value is ReceiptDensity {
+  return value === 2 || value === 4;
+}
+
+/**
+ * 외부(구글 시트/JSON 백업 등)에서 복원한 영수증 메타데이터를 검증·정규화합니다.
+ */
+export function sanitizeReceiptMetadata(
+  raw: unknown
+): ReceiptMetadata | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const width = Number(obj.width);
+  const height = Number(obj.height);
+  const sizeKb = Number(obj.sizeKb);
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+    sizeKb: Number.isFinite(sizeKb) && sizeKb >= 0 ? Math.round(sizeKb) : 0,
+    ...(typeof obj.fileName === 'string' && obj.fileName.trim()
+      ? { fileName: obj.fileName }
+      : {}),
+  };
+}
+
+/**
+ * 거래의 비파괴 분할 설정(ReceiptEditConfig)을 검증·정규화합니다.
+ */
+export function sanitizeReceiptEditConfig(
+  raw: unknown
+): ReceiptEditConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.segments)) return undefined;
+
+  const seenIds = new Set<string>();
+  const validSegments: ReceiptSegment[] = [];
+
+  for (const item of obj.segments) {
+    if (!item || typeof item !== 'object') continue;
+    const seg = item as Record<string, unknown>;
+    const id = typeof seg.id === 'string' ? seg.id.trim() : '';
+    if (!id || seenIds.has(id)) continue;
+
+    const yStart = Number(seg.yStart);
+    const yEnd = Number(seg.yEnd);
+    if (
+      !Number.isFinite(yStart) ||
+      !Number.isFinite(yEnd) ||
+      yStart < 0 ||
+      yEnd > MAX_NORMALIZED_BOUND_EPSILON ||
+      yStart >= yEnd
+    ) {
+      continue;
+    }
+
+    const clampedYStart = roundNormalizedCoord(Math.max(0, Math.min(1, yStart)));
+    const clampedYEnd = roundNormalizedCoord(Math.max(0, Math.min(1, yEnd)));
+    if (clampedYStart >= clampedYEnd) continue;
+
+    let xStart: number | undefined;
+    let xEnd: number | undefined;
+    if (seg.xStart !== undefined || seg.xEnd !== undefined) {
+      const rawXStart = seg.xStart === undefined ? 0 : Number(seg.xStart);
+      const rawXEnd = seg.xEnd === undefined ? 1 : Number(seg.xEnd);
+      if (
+        Number.isFinite(rawXStart) &&
+        Number.isFinite(rawXEnd) &&
+        rawXStart >= 0 &&
+        rawXEnd <= MAX_NORMALIZED_BOUND_EPSILON &&
+        rawXStart < rawXEnd
+      ) {
+        xStart = roundNormalizedCoord(Math.max(0, Math.min(1, rawXStart)));
+        xEnd = roundNormalizedCoord(Math.max(0, Math.min(1, rawXEnd)));
+      }
+    }
+
+    seenIds.add(id);
+    validSegments.push({
+      id,
+      yStart: clampedYStart,
+      yEnd: clampedYEnd,
+      ...(xStart !== undefined && xEnd !== undefined ? { xStart, xEnd } : {}),
+    });
+  }
+
+  if (validSegments.length === 0) return undefined;
+
+  return {
+    version: 1,
+    segments: validSegments,
+    ...(typeof obj.updatedAt === 'string' && obj.updatedAt
+      ? { updatedAt: obj.updatedAt }
+      : {}),
+  };
+}
+
+function sanitizeCustomPlacements(
+  rawPlacements: unknown,
+  segmentIds: string[]
+): SlotSegmentPlacement[] | null {
+  if (!Array.isArray(rawPlacements) || rawPlacements.length === 0) {
+    return null;
+  }
+
+  const expectedSet = new Set(segmentIds);
+  const byId = new Map<string, SlotSegmentPlacement>();
+
+  for (const item of rawPlacements) {
+    if (!item || typeof item !== 'object') return null;
+    const p = item as Record<string, unknown>;
+    const segmentId = typeof p.segmentId === 'string' ? p.segmentId.trim() : '';
+    if (!segmentId || !expectedSet.has(segmentId) || byId.has(segmentId)) {
+      return null;
+    }
+
+    if (
+      !isFiniteNumber(p.x) ||
+      !isFiniteNumber(p.y) ||
+      !isFiniteNumber(p.w) ||
+      !isFiniteNumber(p.h)
+    ) {
+      return null;
+    }
+
+    if (
+      p.x < 0 ||
+      p.y < 0 ||
+      p.w < MIN_VALID_PLACEMENT_SIZE ||
+      p.h < MIN_VALID_PLACEMENT_SIZE ||
+      p.w > 1 ||
+      p.h > 1 ||
+      p.x + p.w > MAX_NORMALIZED_BOUND_EPSILON ||
+      p.y + p.h > MAX_NORMALIZED_BOUND_EPSILON
+    ) {
+      return null;
+    }
+
+    const w = roundNormalizedCoord(Math.min(1, p.w));
+    const h = roundNormalizedCoord(Math.min(1, p.h));
+    const x = roundNormalizedCoord(Math.min(Math.max(0, p.x), 1 - w));
+    const y = roundNormalizedCoord(Math.min(Math.max(0, p.y), 1 - h));
+    const z = isFiniteNumber(p.z) ? Math.round(p.z) : undefined;
+
+    byId.set(segmentId, {
+      segmentId,
+      x,
+      y,
+      w,
+      h,
+      ...(z !== undefined ? { z } : {}),
+    });
+  }
+
+  if (byId.size !== expectedSet.size) {
+    return null;
+  }
+
+  return segmentIds.map((id) => byId.get(id)!);
+}
+
+function sanitizeReceiptSlotRef(raw: unknown): ReceiptSlotRef {
+  if (!raw || typeof raw !== 'object') return { kind: 'empty' };
+  const obj = raw as Record<string, unknown>;
+
+  if (obj.kind === 'empty') {
+    return { kind: 'empty' };
+  }
+
+  if (obj.kind === 'tx') {
+    const txId = typeof obj.txId === 'string' ? obj.txId.trim() : '';
+    return txId ? { kind: 'tx', txId } : { kind: 'empty' };
+  }
+
+  if (obj.kind === 'segment_group') {
+    const txId = typeof obj.txId === 'string' ? obj.txId.trim() : '';
+    if (!txId || !Array.isArray(obj.segmentIds)) {
+      return { kind: 'empty' };
+    }
+
+    const segmentIds = Array.from(
+      new Set(
+        obj.segmentIds
+          .map((id) => (typeof id === 'string' ? id.trim() : ''))
+          .filter(Boolean)
+      )
+    );
+    if (segmentIds.length === 0) {
+      return { kind: 'empty' };
+    }
+
+    const baseGroup: SegmentGroupSlotRef = {
+      kind: 'segment_group',
+      txId,
+      segmentIds,
+    };
+
+    if (obj.layoutMode === 'custom') {
+      const validPlacements = sanitizeCustomPlacements(
+        obj.placements,
+        segmentIds
+      );
+      if (validPlacements) {
+        return {
+          ...baseGroup,
+          layoutMode: 'custom',
+          placements: validPlacements,
+        };
+      }
+      // NaN 또는 범위 이탈 좌표는 안전하게 auto 모드로 폴백
+      return {
+        ...baseGroup,
+        layoutMode: 'auto',
+      };
+    }
+
+    return {
+      ...baseGroup,
+      layoutMode: 'auto',
+    };
+  }
+
+  return { kind: 'empty' };
+}
+
+function sanitizeReceiptItemRef(raw: unknown): ReceiptItemRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const txId = typeof obj.txId === 'string' ? obj.txId.trim() : '';
+  if (!txId) return null;
+
+  if (obj.kind === 'tx') {
+    return { kind: 'tx', txId };
+  }
+  if (obj.kind === 'segment') {
+    const segmentId =
+      typeof obj.segmentId === 'string' ? obj.segmentId.trim() : '';
+    if (!segmentId) return null;
+    return { kind: 'segment', txId, segmentId };
+  }
+  return null;
+}
+
+function sanitizeDensityLayout(
+  raw: unknown,
+  expectedDensity: ReceiptDensity
+): ReceiptDensityLayout | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.pages)) return null;
+
+  const pages: ReceiptPageLayout[] = obj.pages
+    .filter((p): p is Record<string, unknown> => Boolean(p && typeof p === 'object'))
+    .map((page, pageIndex) => {
+      const rawSlots = Array.isArray(page.slots) ? page.slots : [];
+      const normalizedSlots: ReceiptSlotRef[] = [];
+      for (let i = 0; i < expectedDensity; i++) {
+        normalizedSlots.push(sanitizeReceiptSlotRef(rawSlots[i]));
+      }
+      const pageId =
+        typeof page.pageId === 'string' && page.pageId.trim()
+          ? page.pageId.trim()
+          : `page-${expectedDensity}-${pageIndex + 1}`;
+      return {
+        pageId,
+        slots: normalizedSlots,
+      };
+    });
+
+  const unplaced: ReceiptItemRef[] | undefined = Array.isArray(obj.unplaced)
+    ? obj.unplaced
+        .map(sanitizeReceiptItemRef)
+        .filter((item): item is ReceiptItemRef => item !== null)
+    : undefined;
+
+  return {
+    density: expectedDensity,
+    pages,
+    ...(unplaced && unplaced.length > 0 ? { unplaced } : {}),
+    updatedAt:
+      typeof obj.updatedAt === 'string' && obj.updatedAt
+        ? obj.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+/**
+ * 영수증철 월·계정 스코프 배치 엔트리를 검증·복구합니다.
+ * 잘못된 자유 배치 좌표(NaN·범위 이탈)는 layoutMode: 'auto', placements: undefined로 안전 폴백합니다.
+ */
+export function sanitizeReceiptLayoutEntry(
+  raw: unknown
+): ReceiptBookLayoutEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+
+  const activeDensity = isValidDensity(obj.activeDensity)
+    ? obj.activeDensity
+    : undefined;
+
+  const rawByDensity =
+    obj.byDensity && typeof obj.byDensity === 'object'
+      ? (obj.byDensity as Record<string, unknown>)
+      : {};
+
+  const byDensity: Partial<Record<ReceiptDensity, ReceiptDensityLayout>> = {};
+  const layout2 = sanitizeDensityLayout(rawByDensity[2] ?? rawByDensity['2'], 2);
+  if (layout2) byDensity[2] = layout2;
+
+  const layout4 = sanitizeDensityLayout(rawByDensity[4] ?? rawByDensity['4'], 4);
+  if (layout4) byDensity[4] = layout4;
+
+  if (!activeDensity && !byDensity[2] && !byDensity[4]) {
+    return null;
+  }
+
+  return {
+    version: 1,
+    ...(activeDensity ? { activeDensity } : {}),
+    byDensity,
+    updatedAt:
+      typeof obj.updatedAt === 'string' && obj.updatedAt
+        ? obj.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+/**
+ * 전체 영수증철 배치 맵(ReceiptBookLayoutsMap)을 검증·정규화합니다.
+ */
+export function sanitizeReceiptLayoutsMap(
+  raw: unknown
+): ReceiptBookLayoutsMap {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result: ReceiptBookLayoutsMap = {};
+  for (const [scopeKey, entry] of Object.entries(
+    raw as Record<string, unknown>
+  )) {
+    const trimmedKey = scopeKey.trim();
+    if (!trimmedKey) continue;
+    const sanitized = sanitizeReceiptLayoutEntry(entry);
+    if (sanitized) {
+      result[trimmedKey] = sanitized;
+    }
+  }
+  return result;
+}
 
 export interface BudgetsMap {
   retreat_claim: BudgetDocument;
@@ -76,14 +458,16 @@ export const SyncManager = {
     }
   },
 
-  saveTransactions(transactions: Transaction[]): void {
+  saveTransactions(transactions: Transaction[]): boolean {
     try {
       localStorage.setItem(
         STORAGE_KEYS.TRANSACTIONS,
         JSON.stringify(transactions)
       );
+      return true;
     } catch (e) {
       console.error('LocalStorage 거래 저장 실패:', e);
+      return false;
     }
   },
 
@@ -168,11 +552,40 @@ export const SyncManager = {
     }
   },
 
+  sanitizeReceiptLayoutEntry(raw: unknown): ReceiptBookLayoutEntry | null {
+    return sanitizeReceiptLayoutEntry(raw);
+  },
+
+  loadReceiptLayouts(): ReceiptBookLayoutsMap {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECEIPT_LAYOUTS);
+      if (!raw) return {};
+      return sanitizeReceiptLayoutsMap(JSON.parse(raw));
+    } catch {
+      return {};
+    }
+  },
+
+  saveReceiptLayouts(layouts: ReceiptBookLayoutsMap): boolean {
+    try {
+      const sanitized = sanitizeReceiptLayoutsMap(layouts);
+      localStorage.setItem(
+        STORAGE_KEYS.RECEIPT_LAYOUTS,
+        JSON.stringify(sanitized)
+      );
+      return true;
+    } catch (e) {
+      console.error('LocalStorage 영수증철 배치 저장 실패:', e);
+      return false;
+    }
+  },
+
   resetToSampleData(): {
     transactions: Transaction[];
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
+    receiptLayouts: ReceiptBookLayoutsMap;
   } {
     const budgets: BudgetsMap = {
       retreat_claim: INITIAL_RETREAT_BUDGET,
@@ -182,6 +595,7 @@ export const SyncManager = {
       ...this.loadSettings(),
       isProductionMode: false,
     };
+    const emptyLayouts: ReceiptBookLayoutsMap = {};
     localStorage.setItem(
       STORAGE_KEYS.TRANSACTIONS,
       JSON.stringify(INITIAL_TRANSACTIONS)
@@ -192,16 +606,21 @@ export const SyncManager = {
       JSON.stringify(INITIAL_MOKJANG_GROUPS)
     );
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
+    localStorage.setItem(
+      STORAGE_KEYS.RECEIPT_LAYOUTS,
+      JSON.stringify(emptyLayouts)
+    );
     return {
       transactions: INITIAL_TRANSACTIONS,
       budgets,
       mokjangs: INITIAL_MOKJANG_GROUPS,
       settings: nextSettings,
+      receiptLayouts: emptyLayouts,
     };
   },
 
   /**
-   * 모든 탭의 데이터(장부 거래·영수증 + 목장 현황 + 연간 예산안 + 수련회 청구서 + 커스텀 분류)를
+   * 모든 탭의 데이터(장부 거래·영수증 + 목장 현황 + 연간 예산안 + 수련회 청구서 + 커스텀 분류 + 영수증철 배치)를
    * 일괄 초기화하여 깨끗한 실사용 상태로 전환합니다.
    */
   resetAllDataClean(
@@ -213,6 +632,7 @@ export const SyncManager = {
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
+    receiptLayouts: ReceiptBookLayoutsMap;
   } {
     const prevSettings = this.loadSettings();
     const prevBudgets = this.loadBudgets();
@@ -306,6 +726,7 @@ export const SyncManager = {
     };
 
     const cleanMokjangs: MokjangGroup[] = [];
+    const emptyLayouts: ReceiptBookLayoutsMap = {};
 
     localStorage.setItem(
       STORAGE_KEYS.TRANSACTIONS,
@@ -314,12 +735,17 @@ export const SyncManager = {
     localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(cleanBudgets));
     localStorage.setItem(STORAGE_KEYS.MOKJANGS, JSON.stringify(cleanMokjangs));
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
+    localStorage.setItem(
+      STORAGE_KEYS.RECEIPT_LAYOUTS,
+      JSON.stringify(emptyLayouts)
+    );
 
     return {
       transactions: cleanTransactions,
       budgets: cleanBudgets,
       mokjangs: cleanMokjangs,
       settings: nextSettings,
+      receiptLayouts: emptyLayouts,
     };
   },
 
@@ -331,6 +757,7 @@ export const SyncManager = {
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
+    receiptLayouts: ReceiptBookLayoutsMap;
   } {
     return this.resetAllDataClean(yearMonth, initialCarryoverAmount, true);
   },
@@ -379,6 +806,7 @@ export const SyncManager = {
       budgets: Record<BudgetTemplateType, BudgetDocument>;
       mokjangs?: MokjangGroup[];
       settings: AppSettings;
+      receiptLayouts?: ReceiptBookLayoutsMap;
     }
   ): Promise<{ ok: boolean; syncedAt?: string; error?: string }> {
     const safeSettings = {
@@ -403,13 +831,18 @@ export const SyncManager = {
     budgets?: Partial<BudgetsMap>;
     mokjangs?: MokjangGroup[];
     settings?: Partial<AppSettings>;
+    receiptLayouts?: ReceiptBookLayoutsMap;
     serverTime?: string;
     error?: string;
   }> {
     const response = await fetch(webAppUrl.trim(), {
       method: 'GET',
     });
-    return await response.json();
+    const data = await response.json();
+    if (data && data.receiptLayouts) {
+      data.receiptLayouts = sanitizeReceiptLayoutsMap(data.receiptLayouts);
+    }
+    return data;
   },
 
   exportTransactionsCsv(
@@ -492,25 +925,29 @@ export const SyncManager = {
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
+    receiptLayouts?: ReceiptBookLayoutsMap;
   }): void {
     const safeSettings: AppSettings = {
       ...data.settings,
       geminiApiKey: '', // 개인 API 키는 백업 파일 유출 방지를 위해 제외
     };
+    const sanitizedLayouts = sanitizeReceiptLayoutsMap(data.receiptLayouts);
     const jsonStr = JSON.stringify(
       {
-        version: '3.0',
+        version: BACKUP_SCHEMA_VERSION,
         exportedAt: new Date().toISOString(),
         summary: {
           transactionCount: data.transactions.length,
           mokjangCount: data.mokjangs.length,
           annualBudgetItemCount: data.budgets.annual_budget.items.length,
           retreatBudgetItemCount: data.budgets.retreat_claim.items.length,
+          receiptLayoutScopeCount: Object.keys(sanitizedLayouts).length,
         },
         transactions: data.transactions,
         budgets: data.budgets,
         mokjangs: data.mokjangs,
         settings: safeSettings,
+        receiptLayouts: sanitizedLayouts,
       },
       null,
       2
@@ -536,6 +973,7 @@ export const SyncManager = {
         budgets: Partial<BudgetsMap>;
         mokjangs: MokjangGroup[] | null;
         settings: Partial<AppSettings> | null;
+        receiptLayouts?: ReceiptBookLayoutsMap;
       }
     | { ok: false; error: string } {
     try {
@@ -548,7 +986,8 @@ export const SyncManager = {
         Array.isArray(parsed.transactions) ||
         Boolean(parsed.budgets) ||
         Array.isArray(parsed.mokjangs) ||
-        Boolean(parsed.settings);
+        Boolean(parsed.settings) ||
+        Boolean(parsed.receiptLayouts);
 
       if (!hasAnySection) {
         return {
@@ -557,11 +996,32 @@ export const SyncManager = {
         };
       }
 
+      // 거래 내역 내 분할 설정/메타데이터 정합성 보정 (구버전 v3.0 호환)
+      const transactions: Transaction[] = Array.isArray(parsed.transactions)
+        ? parsed.transactions.map((rawTx: Transaction) => {
+            if (!rawTx || typeof rawTx !== 'object') return rawTx;
+            const receiptEdit = rawTx.receiptEdit
+              ? sanitizeReceiptEditConfig(rawTx.receiptEdit)
+              : undefined;
+            const receiptMeta = rawTx.receiptMeta
+              ? sanitizeReceiptMetadata(rawTx.receiptMeta)
+              : undefined;
+            return {
+              ...rawTx,
+              ...(receiptEdit ? { receiptEdit } : { receiptEdit: undefined }),
+              ...(receiptMeta ? { receiptMeta } : { receiptMeta: undefined }),
+            };
+          })
+        : [];
+
+      const receiptLayouts =
+        parsed.receiptLayouts && typeof parsed.receiptLayouts === 'object'
+          ? sanitizeReceiptLayoutsMap(parsed.receiptLayouts)
+          : undefined;
+
       return {
         ok: true,
-        transactions: Array.isArray(parsed.transactions)
-          ? parsed.transactions
-          : [],
+        transactions,
         budgets:
           parsed.budgets && typeof parsed.budgets === 'object'
             ? parsed.budgets
@@ -571,6 +1031,7 @@ export const SyncManager = {
           parsed.settings && typeof parsed.settings === 'object'
             ? parsed.settings
             : null,
+        ...(receiptLayouts !== undefined ? { receiptLayouts } : {}),
       };
     } catch {
       return {

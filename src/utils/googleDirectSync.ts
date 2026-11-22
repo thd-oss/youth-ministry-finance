@@ -9,6 +9,9 @@ import {
   MokjangGroup,
   PaymentMethod,
   ProcessedTransaction,
+  ReceiptBookLayoutsMap,
+  ReceiptEditConfig,
+  ReceiptMetadata,
   Transaction,
   TransactionType,
 } from '../types/finance';
@@ -17,7 +20,13 @@ import {
   INITIAL_ANNUAL_BUDGET,
   INITIAL_RETREAT_BUDGET,
 } from './sampleData';
-import { BudgetsMap } from './syncManager';
+import {
+  BudgetsMap,
+  sanitizeReceiptEditConfig,
+  sanitizeReceiptLayoutEntry,
+  sanitizeReceiptLayoutsMap,
+  sanitizeReceiptMetadata,
+} from './syncManager';
 
 // 빌드 시 환경변수(VITE_GOOGLE_CLIENT_ID)로 기본 클라이언트 ID를 내장할 수 있습니다.
 export const BUILTIN_GOOGLE_CLIENT_ID: string =
@@ -34,6 +43,8 @@ const SESSION_KEY = 'tds_youth_finance_google_session_v1';
 const ROOT_FOLDER_NAME = '청년부_회계_통합관리';
 const RECEIPT_FOLDER_NAME = '영수증_증빙';
 const DEFAULT_SPREADSHEET_TITLE = '청년부 회계장부 (통합백업)';
+const DRIVE_THUMBNAIL_WIDTH_PX = 2000;
+const RECEIPT_LAYOUT_SETTING_PREFIX = 'receiptLayout:';
 
 const SHEET_NAMES = {
   LEDGER: '장부내역',
@@ -550,6 +561,58 @@ export async function ensureGoogleWorkspace(
   };
 }
 
+/**
+ * Google Drive 썸네일·뷰어 URL에서 파일 ID를 추출합니다.
+ * Data URL이거나 드라이브 URL이 아니면 null을 반환합니다.
+ */
+export function extractDriveFileId(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith('data:')) return null;
+
+  const isDriveHost =
+    trimmed.includes('drive.google.com') ||
+    trimmed.includes('googleusercontent.com');
+  if (!isDriveHost) return null;
+
+  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (queryMatch?.[1]) return queryMatch[1];
+
+  const filePathMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (filePathMatch?.[1]) return filePathMatch[1];
+
+  const shortPathMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (shortPathMatch?.[1]) return shortPathMatch[1];
+
+  return null;
+}
+
+/**
+ * OAuth 액세스 토큰으로 Google Drive 원본 이미지 Blob을 직접 내려받습니다.
+ * (썸네일 해상도 저하 및 Canvas CORS Tainted 오류를 원천 방지)
+ */
+export async function fetchDriveFileBlob(
+  fileId: string,
+  accessToken: string
+): Promise<Blob> {
+  const cleanId = fileId.trim();
+  if (!cleanId) {
+    throw new Error('유효한 Google Drive 파일 ID가 아닙니다.');
+  }
+  const res = await googleApiFetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+      cleanId
+    )}?alt=media`,
+    accessToken
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Google Drive 원본 이미지 불러오기 실패 (${res.status})`
+    );
+  }
+  return await res.blob();
+}
+
 function dataUrlToBlob(dataUrl: string): { blob: Blob; ext: string } {
   const parts = dataUrl.split(',');
   const mimeMatch = parts[0].match(/data:(.*?);/);
@@ -645,14 +708,14 @@ async function uploadReceiptImageToDrive(
   }
 
   return {
-    thumbnailUrl: `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`,
+    thumbnailUrl: `https://drive.google.com/thumbnail?id=${fileId}&sz=w${DRIVE_THUMBNAIL_WIDTH_PX}`,
     driveUrl:
       uploaded.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
   };
 }
 
 /**
- * 모든 탭(장부·영수증·목장·연간예산안·수련회청구서·설정)의 데이터를
+ * 모든 탭(장부·영수증·목장·연간예산안·수련회청구서·설정·영수증철 배치)의 데이터를
  * 구글 시트 5개 탭과 구글 드라이브 영수증 폴더에 일괄 백업합니다.
  */
 export async function pushAllToGoogleSheets(
@@ -664,6 +727,7 @@ export async function pushAllToGoogleSheets(
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
+    receiptLayouts?: ReceiptBookLayoutsMap;
   }
 ): Promise<{
   updatedTransactions: Transaction[];
@@ -716,6 +780,8 @@ export async function pushAllToGoogleSheets(
       '영수증드라이브링크',
       '생성일시',
       '수정일시',
+      '영수증분할정보',
+      '영수증메타',
     ],
     ...payload.transactions.map((tx, idx) => {
       const saved = uploadedTransactions[idx];
@@ -737,6 +803,8 @@ export async function pushAllToGoogleSheets(
         saved.receiptDriveUrl || '',
         saved.createdAt || now,
         now,
+        saved.receiptEdit ? JSON.stringify(saved.receiptEdit) : '',
+        saved.receiptMeta ? JSON.stringify(saved.receiptMeta) : '',
       ];
     }),
   ];
@@ -881,6 +949,16 @@ export async function pushAllToGoogleSheets(
     ['isProductionMode', String(Boolean(safeSettings.isProductionMode)), now],
   ];
 
+  // 월·계정 스코프별 영수증철 배치 행 추가 (셀 50,000자 제한 회피를 위해 행 분리 저장)
+  const sanitizedLayouts = sanitizeReceiptLayoutsMap(payload.receiptLayouts);
+  for (const [scopeKey, entry] of Object.entries(sanitizedLayouts)) {
+    settingRows.push([
+      `${RECEIPT_LAYOUT_SETTING_PREFIX}${scopeKey}`,
+      JSON.stringify(entry),
+      entry.updatedAt || now,
+    ]);
+  }
+
   // 3) 기존 시트 내용 클리어 후 5개 시트 일괄 쓰기
   const clearRanges = Object.values(SHEET_NAMES).map((name) => `${name}!A:Z`);
   await googleApiFetch(
@@ -937,11 +1015,12 @@ export async function pullAllFromGoogleSheets(
   mokjangs: MokjangGroup[];
   budgets: BudgetsMap;
   settings: AppSettings;
+  receiptLayouts: ReceiptBookLayoutsMap;
 }> {
   await ensureAllSheetTabs(accessToken, spreadsheetId);
 
   const ranges = [
-    `${SHEET_NAMES.LEDGER}!A1:Q`,
+    `${SHEET_NAMES.LEDGER}!A1:S`,
     `${SHEET_NAMES.MOKJANG}!A1:G`,
     `${SHEET_NAMES.BUDGET_ITEMS}!A1:I`,
     `${SHEET_NAMES.BUDGET_META}!A1:R`,
@@ -979,6 +1058,24 @@ export async function pullAllFromGoogleSheets(
         ? rawSubType
         : undefined;
 
+    let receiptEdit: ReceiptEditConfig | undefined;
+    if (r[17]) {
+      try {
+        receiptEdit = sanitizeReceiptEditConfig(JSON.parse(String(r[17])));
+      } catch {
+        receiptEdit = undefined;
+      }
+    }
+
+    let receiptMeta: ReceiptMetadata | undefined;
+    if (r[18]) {
+      try {
+        receiptMeta = sanitizeReceiptMetadata(JSON.parse(String(r[18])));
+      } catch {
+        receiptMeta = undefined;
+      }
+    }
+
     transactions.push({
       id: String(r[0]),
       date: String(r[1] || new Date().toISOString().slice(0, 10)),
@@ -994,6 +1091,8 @@ export async function pullAllFromGoogleSheets(
       paymentMethod: (String(r[11] || '체크카드') as PaymentMethod) || '체크카드',
       receiptImage: r[13] ? String(r[13]) : undefined,
       receiptDriveUrl: r[14] ? String(r[14]) : undefined,
+      ...(receiptMeta ? { receiptMeta } : {}),
+      ...(receiptEdit ? { receiptEdit } : {}),
       createdAt: String(r[15] || new Date().toISOString()),
     });
   }
@@ -1086,6 +1185,7 @@ export async function pullAllFromGoogleSheets(
     ...DEFAULT_SETTINGS,
     ...currentSettings,
   };
+  const receiptLayouts: ReceiptBookLayoutsMap = {};
 
   for (let i = 1; i < settingValues.length; i++) {
     const r = settingValues[i];
@@ -1093,6 +1193,16 @@ export async function pullAllFromGoogleSheets(
     const k = String(r[0]);
     const v = String(r[1] ?? '');
     try {
+      if (k.startsWith(RECEIPT_LAYOUT_SETTING_PREFIX) && v) {
+        const scopeKey = k.slice(RECEIPT_LAYOUT_SETTING_PREFIX.length).trim();
+        if (scopeKey) {
+          const parsedEntry = sanitizeReceiptLayoutEntry(JSON.parse(v));
+          if (parsedEntry) {
+            receiptLayouts[scopeKey] = parsedEntry;
+          }
+        }
+        continue;
+      }
       if (k === 'departmentName' && v) nextSettings.departmentName = v;
       if (k === 'authorName' && v) nextSettings.authorName = v;
       if (k === 'authorRole' && v) nextSettings.authorRole = v;
@@ -1131,5 +1241,6 @@ export async function pullAllFromGoogleSheets(
       ...nextSettings,
       lastSyncedAt: new Date().toISOString(),
     },
+    receiptLayouts,
   };
 }

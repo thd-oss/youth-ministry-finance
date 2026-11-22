@@ -37,6 +37,88 @@ export interface ReceiptMetadata {
   fileName?: string;
 }
 
+/** 비파괴 영수증 분할 세그먼트 (원본 이미지 기준 정규화 좌표 0.0 ~ 1.0) */
+export interface ReceiptSegment {
+  id: string;
+  yStart: number;
+  yEnd: number;
+  xStart?: number;
+  xEnd?: number;
+}
+
+/** 거래에 귀속되는 비파괴 영수증 분할 편집 설정 (Cut SSOT) */
+export interface ReceiptEditConfig {
+  version: 1;
+  segments: ReceiptSegment[];
+  updatedAt?: string;
+}
+
+/** 슬롯 내부 이미지 박스(W_img × H_img) 기준 정규화 자유 배치 좌표 (0.0 ~ 1.0) */
+export interface SlotSegmentPlacement {
+  segmentId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z?: number;
+}
+
+/** 단일 슬롯 내부 패킹 계산 결과 (자동 패킹·오버플로우·자유 배치 시드 공용) */
+export interface PackedSlotResult {
+  segmentIds: string[];
+  placements: SlotSegmentPlacement[];
+  renderedWidthMm: number;
+  isUnderReadableWidth: boolean;
+}
+
+/** 영수증철 A4 페이지당 슬롯 밀도 (2: 1행2열, 4: 2행2열) */
+export type ReceiptDensity = 2 | 4;
+
+/** 개별 영수증 또는 분할 조각 참조 (미배치 대기함 등 공용) */
+export type ReceiptItemRef =
+  | { kind: 'tx'; txId: string }
+  | { kind: 'segment'; txId: string; segmentId: string };
+
+/** 같은 영수증의 1개 이상 분할 조각을 수용하는 A4 슬롯 카드 참조 */
+export interface SegmentGroupSlotRef {
+  kind: 'segment_group';
+  txId: string;
+  segmentIds: string[];
+  layoutMode?: 'auto' | 'custom';
+  placements?: SlotSegmentPlacement[];
+}
+
+/** A4 1칸(슬롯)의 내용물 판별 유니온 */
+export type ReceiptSlotRef =
+  | { kind: 'tx'; txId: string }
+  | SegmentGroupSlotRef
+  | { kind: 'empty' };
+
+/** A4 영수증철 단일 페이지의 슬롯 배열 (길이는 해당 density와 일치) */
+export interface ReceiptPageLayout {
+  pageId: string;
+  slots: ReceiptSlotRef[];
+}
+
+/** 특정 밀도(2-up 또는 4-up)의 페이지·슬롯 배치 상태 */
+export interface ReceiptDensityLayout {
+  density: ReceiptDensity;
+  pages: ReceiptPageLayout[];
+  unplaced?: ReceiptItemRef[];
+  updatedAt: string;
+}
+
+/** 월·계정 스코프별 영수증철 배치 설정 (Packing & Placement SSOT) */
+export interface ReceiptBookLayoutEntry {
+  version: 1;
+  activeDensity?: ReceiptDensity;
+  byDensity: Partial<Record<ReceiptDensity, ReceiptDensityLayout>>;
+  updatedAt: string;
+}
+
+/** key 형식: `${yearMonth}:${accountFilter}` (예: '2026-11:all') */
+export type ReceiptBookLayoutsMap = Record<string, ReceiptBookLayoutEntry>;
+
 export interface Transaction {
   id: string;
   date: string; // YYYY-MM-DD
@@ -53,6 +135,7 @@ export interface Transaction {
   receiptImage?: string; // Base64 Data URL 또는 Google Drive 썸네일 URL
   receiptDriveUrl?: string; // Google Drive 원본 뷰어 URL
   receiptMeta?: ReceiptMetadata;
+  receiptEdit?: ReceiptEditConfig; // 비파괴 영수증 분할 정보 (미분할 시 undefined)
   createdAt: string;
 }
 

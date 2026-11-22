@@ -8,6 +8,7 @@ import {
   Layers,
   Loader2,
   Plus,
+  Scissors,
   Sparkles,
   Tag,
   Trash2,
@@ -34,6 +35,9 @@ import { analyzeReceiptWithGemini } from '../utils/receiptAiAnalyzer';
 import { CategoryBudgetAllocation } from '../utils/syncManager';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 import { TdsDialog } from './TdsDialog';
+
+/** 2행2열(4-up) 기준 긴 영수증 판정 종횡비(높이 / 너비) 임계값 */
+const LONG_RECEIPT_ASPECT_THRESHOLD = 1.55;
 
 interface TransactionBottomSheetProps {
   open: boolean;
@@ -108,6 +112,10 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
   const [receiptMeta, setReceiptMeta] = useState<ReceiptMetadata | undefined>(
     undefined
   );
+  const [fallbackImageDims, setFallbackImageDims] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
 
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [isAnalyzingAi, setIsAnalyzingAi] = useState<boolean>(false);
@@ -126,6 +134,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     setIsAddingCategory(false);
     setNewCategoryName('');
     setNewCategoryMonthlyBudgetStr('');
+    setFallbackImageDims(null);
 
     if (initialTransaction) {
       setType(initialTransaction.type);
@@ -334,7 +343,9 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     try {
       const compressed = await compressReceiptImage(file, 1200, 0.8);
       setReceiptImage(compressed.dataUrl);
+      setReceiptDriveUrl(undefined);
       setReceiptMeta(compressed.meta);
+      setFallbackImageDims(null);
       setIsCompressing(false);
 
       if (type === 'expense' && geminiApiKey.trim()) {
@@ -385,6 +396,14 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       return;
     }
 
+    // 사진이 동일하게 유지된 경우에만 기존 비파괴 분할 정보를 보존하고, 교체·삭제 시 명시 초기화
+    const isSameReceiptImage =
+      Boolean(receiptImage) &&
+      receiptImage === initialTransaction?.receiptImage;
+    const nextReceiptEdit = isSameReceiptImage
+      ? initialTransaction?.receiptEdit
+      : undefined;
+
     const savedTx: Transaction = {
       id: initialTransaction?.id || `tx-${Date.now()}`,
       date,
@@ -402,6 +421,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
       receiptImage,
       receiptDriveUrl,
       receiptMeta,
+      receiptEdit: nextReceiptEdit,
       createdAt: initialTransaction?.createdAt || new Date().toISOString(),
     };
 
@@ -418,6 +438,21 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
     currentBudgetItemNames
   );
   const hasGeminiKey = Boolean(geminiApiKey.trim());
+
+  const isSameInitialReceipt =
+    Boolean(receiptImage) && receiptImage === initialTransaction?.receiptImage;
+  const hasActiveReceiptSplit = Boolean(
+    isSameInitialReceipt &&
+      initialTransaction?.receiptEdit &&
+      initialTransaction.receiptEdit.segments.length > 0
+  );
+  const effectiveReceiptDims = receiptMeta || fallbackImageDims;
+  const isLongReceiptDetected = Boolean(
+    effectiveReceiptDims &&
+      effectiveReceiptDims.width > 0 &&
+      effectiveReceiptDims.height / effectiveReceiptDims.width >
+        LONG_RECEIPT_ASPECT_THRESHOLD
+  );
 
   return (
     <TdsDialog
@@ -532,6 +567,19 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                   <img
                     src={receiptImage}
                     alt="영수증 미리보기"
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      if (
+                        !receiptMeta &&
+                        img.naturalWidth > 0 &&
+                        img.naturalHeight > 0
+                      ) {
+                        setFallbackImageDims({
+                          width: img.naturalWidth,
+                          height: img.naturalHeight,
+                        });
+                      }
+                    }}
                     className={`max-h-60 w-auto object-contain rounded-xl ${
                       previewScanMode ? 'receipt-scan-filter' : ''
                     }`}
@@ -546,6 +594,16 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                       >
                         원본 이미지 열기 <ExternalLink className="w-3 h-3" />
                       </a>
+                    </div>
+                  )}
+                  {(hasActiveReceiptSplit || isLongReceiptDetected) && (
+                    <div className="mt-2.5 w-full px-3 py-1.5 rounded-xl bg-[#E8F3FF] text-[#1B64DA] text-[12px] font-semibold flex items-center justify-center gap-1.5">
+                      <Scissors className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {hasActiveReceiptSplit
+                          ? '분할 편집됨 · 결산·인쇄 탭에서 수정'
+                          : '긴 영수증 · 결산·인쇄 탭에서 분할 가능'}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -592,6 +650,7 @@ export const TransactionBottomSheet: React.FC<TransactionBottomSheetProps> = ({
                         setReceiptImage(undefined);
                         setReceiptMeta(undefined);
                         setReceiptDriveUrl(undefined);
+                        setFallbackImageDims(null);
                         setAiFilledNotice('');
                       }}
                       className="px-3 py-2 rounded-xl bg-[#FFEEF0] text-[#F04452] text-[12px] font-semibold active:scale-[0.97] transition-all duration-150"

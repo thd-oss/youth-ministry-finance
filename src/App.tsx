@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BookOpen,
   Calculator,
   Calendar,
@@ -10,6 +11,7 @@ import {
   Settings,
   Sparkles,
   Users,
+  X,
 } from 'lucide-react';
 import {
   AccountType,
@@ -20,6 +22,8 @@ import {
   MokjangExpenseSubType,
   MokjangGroup,
   ProcessedTransaction,
+  ReceiptBookLayoutEntry,
+  ReceiptBookLayoutsMap,
   SyncStatus,
   Transaction,
   TransactionType,
@@ -77,6 +81,13 @@ export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(() =>
     SyncManager.loadSettings()
   );
+  const [receiptLayouts, setReceiptLayouts] = useState<ReceiptBookLayoutsMap>(
+    () => SyncManager.loadReceiptLayouts()
+  );
+  const receiptLayoutsRef = useRef<ReceiptBookLayoutsMap>(receiptLayouts);
+  receiptLayoutsRef.current = receiptLayouts;
+
+  const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(false);
 
   const [googleSession, setGoogleSession] = useState<GoogleSession | null>(() =>
     loadGoogleSession()
@@ -148,7 +159,8 @@ export const App: React.FC = () => {
       : [...transactions, savedTx];
 
     setTransactions(nextTransactions);
-    SyncManager.saveTransactions(nextTransactions);
+    const savedLocal = SyncManager.saveTransactions(nextTransactions);
+    setStorageQuotaWarning(!savedLocal);
     bumpDataRevision();
 
     const txYm = savedTx.date.slice(0, 7);
@@ -184,7 +196,8 @@ export const App: React.FC = () => {
                 : t
             );
             setTransactions(withDrive);
-            SyncManager.saveTransactions(withDrive);
+            const savedDriveLocal = SyncManager.saveTransactions(withDrive);
+            setStorageQuotaWarning(!savedDriveLocal);
           }
           setSyncStatus('synced');
         } else {
@@ -199,7 +212,8 @@ export const App: React.FC = () => {
   const handleDeleteTransaction = async (id: string) => {
     const nextTransactions = transactions.filter((t) => t.id !== id);
     setTransactions(nextTransactions);
-    SyncManager.saveTransactions(nextTransactions);
+    const savedLocal = SyncManager.saveTransactions(nextTransactions);
+    if (savedLocal) setStorageQuotaWarning(false);
     bumpDataRevision();
     bumpDataRevision();
 
@@ -286,6 +300,25 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleUpdateReceiptLayout = useCallback(
+    (scopeKey: string, entry: ReceiptBookLayoutEntry) => {
+      const next: ReceiptBookLayoutsMap = {
+        ...receiptLayoutsRef.current,
+        [scopeKey]: entry,
+      };
+      receiptLayoutsRef.current = next;
+      setReceiptLayouts(next);
+      const saved = SyncManager.saveReceiptLayouts(next);
+      if (!saved) {
+        setStorageQuotaWarning(true);
+      } else {
+        setStorageQuotaWarning(false);
+      }
+      bumpDataRevision();
+    },
+    [bumpDataRevision]
+  );
+
   /**
    * Google OAuth 로그인 + 드라이브 통합 폴더/영수증 폴더/5개 시트 스프레드시트 자동 생성·연결
    */
@@ -338,10 +371,12 @@ export const App: React.FC = () => {
           budgets,
           mokjangs,
           settings: nextSettings,
+          receiptLayouts: receiptLayoutsRef.current,
         }
       );
       setTransactions(pushRes.updatedTransactions);
-      SyncManager.saveTransactions(pushRes.updatedTransactions);
+      const savedTx = SyncManager.saveTransactions(pushRes.updatedTransactions);
+      setStorageQuotaWarning(!savedTx);
       const syncedSettings = { ...nextSettings, lastSyncedAt: pushRes.syncedAt };
       setSettings(syncedSettings);
       SyncManager.saveSettings(syncedSettings);
@@ -384,10 +419,12 @@ export const App: React.FC = () => {
             budgets,
             mokjangs,
             settings,
+            receiptLayouts,
           }
         );
         setTransactions(res.updatedTransactions);
-        SyncManager.saveTransactions(res.updatedTransactions);
+        const savedTx = SyncManager.saveTransactions(res.updatedTransactions);
+        setStorageQuotaWarning(!savedTx);
         const syncedSettings = { ...settings, lastSyncedAt: res.syncedAt };
         setSettings(syncedSettings);
         SyncManager.saveSettings(syncedSettings);
@@ -401,7 +438,7 @@ export const App: React.FC = () => {
         isPushingGoogleRef.current = false;
       }
     },
-    [transactions, budgets, mokjangs, settings, yearMonth]
+    [transactions, budgets, mokjangs, settings, receiptLayouts, yearMonth]
   );
 
   const handleGooglePullAll = async () => {
@@ -421,13 +458,17 @@ export const App: React.FC = () => {
         settings
       );
       setTransactions(pulled.transactions);
-      SyncManager.saveTransactions(pulled.transactions);
+      const savedTx = SyncManager.saveTransactions(pulled.transactions);
       setMokjangs(pulled.mokjangs);
       SyncManager.saveMokjangs(pulled.mokjangs);
       setBudgets(pulled.budgets);
       SyncManager.saveBudgets(pulled.budgets);
       setSettings(pulled.settings);
       SyncManager.saveSettings(pulled.settings);
+      setReceiptLayouts(pulled.receiptLayouts);
+      receiptLayoutsRef.current = pulled.receiptLayouts;
+      const savedLayouts = SyncManager.saveReceiptLayouts(pulled.receiptLayouts);
+      setStorageQuotaWarning(!savedTx || !savedLayouts);
       setSyncStatus('synced');
       return {
         transactionCount: pulled.transactions.length,
@@ -502,7 +543,8 @@ export const App: React.FC = () => {
     }
     if (Array.isArray(result.transactions)) {
       setTransactions(result.transactions);
-      SyncManager.saveTransactions(result.transactions);
+      const savedTx = SyncManager.saveTransactions(result.transactions);
+      if (!savedTx) setStorageQuotaWarning(true);
     }
     if (result.budgets) {
       const mergedBudgets: BudgetsMap = {
@@ -516,6 +558,12 @@ export const App: React.FC = () => {
       setMokjangs(result.mokjangs);
       SyncManager.saveMokjangs(result.mokjangs);
     }
+    if (result.receiptLayouts) {
+      setReceiptLayouts(result.receiptLayouts);
+      receiptLayoutsRef.current = result.receiptLayouts;
+      const savedLayouts = SyncManager.saveReceiptLayouts(result.receiptLayouts);
+      if (!savedLayouts) setStorageQuotaWarning(true);
+    }
     setSyncStatus('synced');
   };
 
@@ -527,6 +575,7 @@ export const App: React.FC = () => {
       budgets,
       mokjangs,
       settings,
+      receiptLayouts,
     });
     if (!result.ok) {
       setSyncStatus('local');
@@ -550,7 +599,7 @@ export const App: React.FC = () => {
         }
 
         setTransactions(result.transactions);
-        SyncManager.saveTransactions(result.transactions);
+        const savedTx = SyncManager.saveTransactions(result.transactions);
 
         const nextBudgets: BudgetsMap = {
           annual_budget:
@@ -567,6 +616,13 @@ export const App: React.FC = () => {
           setMokjangs(nextMokjangs);
           SyncManager.saveMokjangs(nextMokjangs);
         }
+
+        const nextReceiptLayouts = result.receiptLayouts ?? {};
+        setReceiptLayouts(nextReceiptLayouts);
+        receiptLayoutsRef.current = nextReceiptLayouts;
+        const savedLayouts =
+          SyncManager.saveReceiptLayouts(nextReceiptLayouts);
+        setStorageQuotaWarning(!savedTx || !savedLayouts);
 
         if (result.settings) {
           const merged: AppSettings = {
@@ -608,6 +664,9 @@ export const App: React.FC = () => {
     setBudgets(clean.budgets);
     setMokjangs(clean.mokjangs);
     setSettings(clean.settings);
+    setReceiptLayouts(clean.receiptLayouts);
+    receiptLayoutsRef.current = clean.receiptLayouts;
+    setStorageQuotaWarning(false);
     if (!keepConnections) {
       clearGoogleSession();
       setGoogleSession(null);
@@ -624,6 +683,9 @@ export const App: React.FC = () => {
     setBudgets(reset.budgets);
     setMokjangs(reset.mokjangs);
     setSettings(reset.settings);
+    setReceiptLayouts(reset.receiptLayouts);
+    receiptLayoutsRef.current = reset.receiptLayouts;
+    setStorageQuotaWarning(false);
     setYearMonth('2026-11');
     setAccountFilter('all');
     bumpDataRevision();
@@ -826,6 +888,37 @@ export const App: React.FC = () => {
         </div>
       </header>
 
+      {/* 로컬 스토리지 용량 부족 경고 배너 (@media print 시 숨김) */}
+      {storageQuotaWarning && (
+        <div className="no-print max-w-[980px] mx-auto px-4 sm:px-6 pt-3">
+          <div className="rounded-2xl bg-[#FFF8E6] px-4 py-2.5 flex items-center justify-between gap-3 text-[13px] font-semibold text-[#B45309]">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="truncate sm:whitespace-normal">
+                브라우저 저장 공간이 부족합니다. 구글 시트 백업을 권장합니다.
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => openSettingsAt('connection')}
+                className="px-2.5 py-1 rounded-xl bg-[#FFFFFF] text-[#B45309] text-[12px] font-bold active:scale-[0.97] transition-all duration-150"
+              >
+                백업 설정
+              </button>
+              <button
+                type="button"
+                aria-label="경고 닫기"
+                onClick={() => setStorageQuotaWarning(false)}
+                className="p-1 rounded-lg text-[#B45309]/70 hover:text-[#B45309]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===================================================================
           메인 뷰 영역
          =================================================================== */}
@@ -926,6 +1019,8 @@ export const App: React.FC = () => {
               setIsTxSheetOpen(true);
             }}
             onQuickSaveTransaction={handleSaveTransaction}
+            receiptLayouts={receiptLayouts}
+            onUpdateReceiptLayout={handleUpdateReceiptLayout}
           />
         )}
 
@@ -997,6 +1092,7 @@ export const App: React.FC = () => {
             budgets,
             mokjangs,
             settings,
+            receiptLayouts,
           })
         }
         onImportJson={handleImportJson}
