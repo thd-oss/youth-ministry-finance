@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Eraser,
   Eye,
   FileText,
@@ -37,16 +38,18 @@ import {
   INITIAL_ANNUAL_BUDGET,
   INITIAL_RETREAT_BUDGET,
 } from '../utils/sampleData';
-import { syncBudgetDocumentWithDepartment } from '../utils/syncManager';
+import {
+  BudgetsMap,
+  createBlankClaimDocument,
+  syncBudgetDocumentWithDepartment,
+} from '../utils/syncManager';
 import { A4ScalePreview } from './A4ScalePreview';
 import { AutoResizeTextarea } from './AutoResizeTextarea';
 
 interface BudgetBuilderViewProps {
-  budgets: Record<BudgetTemplateType, BudgetDocument>;
-  onUpdateBudget: (
-    templateType: BudgetTemplateType,
-    nextDoc: BudgetDocument
-  ) => void;
+  fiscalYear: number;
+  budgets: BudgetsMap;
+  onUpdateBudgets: (nextBudgets: BudgetsMap) => void;
   settings: AppSettings;
   onUpdateSettings: (next: AppSettings) => void;
   activeExpenseCategories: string[];
@@ -139,8 +142,9 @@ const parseDigits = (raw: string): number => {
 };
 
 export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
+  fiscalYear,
   budgets,
-  onUpdateBudget,
+  onUpdateBudgets,
   settings,
   activeExpenseCategories,
   activeIncomeCategories = [],
@@ -148,12 +152,69 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
 }) => {
   const [activeTemplate, setActiveTemplate] =
     useState<BudgetTemplateType>(initialTemplate);
+  const [activeClaimId, setActiveClaimId] = useState<string>(
+    () => budgets.claims?.[0]?.id || budgets.retreat_claim?.id || 'claim-1'
+  );
 
   useEffect(() => {
     if (initialTemplate) {
       setActiveTemplate(initialTemplate);
     }
   }, [initialTemplate]);
+
+  const claims = useMemo(
+    () =>
+      budgets.claims && budgets.claims.length > 0
+        ? budgets.claims
+        : [budgets.retreat_claim],
+    [budgets.claims, budgets.retreat_claim]
+  );
+
+  useEffect(() => {
+    if (!claims.some((c) => c.id === activeClaimId)) {
+      setActiveClaimId(claims[0]?.id || 'claim-1');
+    }
+  }, [claims, activeClaimId]);
+
+  const activeClaimDoc = useMemo(
+    () => claims.find((c) => c.id === activeClaimId) || claims[0],
+    [claims, activeClaimId]
+  );
+
+  const onUpdateBudget = (
+    templateType: BudgetTemplateType,
+    nextDoc: BudgetDocument
+  ) => {
+    if (templateType === 'annual_budget') {
+      onUpdateBudgets({
+        ...budgets,
+        annual_budget: {
+          ...nextDoc,
+          id: 'annual_budget',
+          templateType: 'annual_budget',
+          fiscalYear: nextDoc.fiscalYear || fiscalYear,
+        },
+      });
+      return;
+    }
+
+    const targetId = activeClaimDoc.id || 'claim-1';
+    const nextClaims = claims.map((c) =>
+      c.id === targetId
+        ? {
+            ...nextDoc,
+            id: targetId,
+            templateType: 'retreat_claim' as const,
+            fiscalYear: nextDoc.fiscalYear || fiscalYear,
+          }
+        : c
+    );
+    onUpdateBudgets({
+      ...budgets,
+      claims: nextClaims,
+      retreat_claim: nextClaims[0],
+    });
+  };
 
   const [screenMode, setScreenMode] =
     useState<BuilderScreenMode>('card_editor');
@@ -197,16 +258,85 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
   const draftSubInputRef = useRef<HTMLInputElement | null>(null);
   const draftDetailInputRef = useRef<HTMLInputElement | null>(null);
 
-  const doc = budgets[activeTemplate];
+  const doc =
+    activeTemplate === 'annual_budget' ? budgets.annual_budget : activeClaimDoc;
 
-  // 템플릿 전환 시 편집/입력 패널 초기화
+  // 템플릿 또는 활성 청구서 전환 시 편집/입력 패널 초기화
   useEffect(() => {
     setEditingItemId(null);
     setAddingTarget(null);
     setRenamingGroupKey(null);
     setRenamingSubGroupKey(null);
     setFeedback('');
-  }, [activeTemplate]);
+  }, [activeTemplate, activeClaimId, fiscalYear]);
+
+  const handleAddNewClaim = () => {
+    const newClaim = createBlankClaimDocument(
+      fiscalYear,
+      settings.departmentName,
+      settings.authorName,
+      settings.authorRole,
+      {
+        title: `${fiscalYear}년 ${settings.departmentName || '청년부'} 특별 예산 청구서 #${claims.length + 1}`,
+        bankName: activeClaimDoc.bankName,
+        accountNumber: activeClaimDoc.accountNumber,
+        accountHolder: activeClaimDoc.accountHolder,
+      }
+    );
+    const nextClaims = [...claims, newClaim];
+    onUpdateBudgets({
+      ...budgets,
+      claims: nextClaims,
+      retreat_claim: nextClaims[0],
+    });
+    setActiveTemplate('retreat_claim');
+    setActiveClaimId(newClaim.id || 'claim-1');
+    setScreenMode('card_editor');
+    setIsDocMetaExpanded(true);
+    showToast('새 특별예산 청구서를 추가했습니다.');
+  };
+
+  const handleDuplicateActiveClaim = () => {
+    const clonedId = `claim-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+    const cloned: BudgetDocument = {
+      ...activeClaimDoc,
+      id: clonedId,
+      templateType: 'retreat_claim',
+      fiscalYear,
+      title: `${activeClaimDoc.title} (사본)`,
+      items: activeClaimDoc.items.map((item, idx) => ({
+        ...item,
+        id: `bg-${Date.now()}-${idx}`,
+      })),
+    };
+    const nextClaims = [...claims, cloned];
+    onUpdateBudgets({
+      ...budgets,
+      claims: nextClaims,
+      retreat_claim: nextClaims[0],
+    });
+    setActiveClaimId(clonedId);
+    showToast('현재 청구서를 복제했습니다.');
+  };
+
+  const handleDeleteActiveClaim = () => {
+    if (claims.length <= 1) return;
+    if (
+      !window.confirm(
+        `"${activeClaimDoc.title || '이 청구서'}"를 삭제할까요?\n(다른 청구서와 연간 예산안은 유지됩니다)`
+      )
+    ) {
+      return;
+    }
+    const nextClaims = claims.filter((c) => c.id !== activeClaimDoc.id);
+    onUpdateBudgets({
+      ...budgets,
+      claims: nextClaims,
+      retreat_claim: nextClaims[0],
+    });
+    setActiveClaimId(nextClaims[0]?.id || 'claim-1');
+    showToast('청구서를 삭제했습니다.');
+  };
 
   // 3단계 중첩 위계 트리 파생: 1차 분류 -> 2차 소그룹 -> 3차 세부 항목
   const {
@@ -1954,9 +2084,14 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
          ===================================================================== */}
       <section className="no-print max-w-[980px] mx-auto bg-[#FFFFFF] rounded-3xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <h2 className="text-[19px] font-bold text-[#191F28]">
-            예산안 · 청구서
-          </h2>
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-[19px] font-bold text-[#191F28]">
+              예산안 · 청구서
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full bg-[#F2F4F6] text-[#4E5968] text-[12px] font-bold tabular-nums shrink-0">
+              {fiscalYear}년
+            </span>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
@@ -2011,9 +2146,91 @@ export const BudgetBuilderView: React.FC<BudgetBuilderViewProps> = ({
                 : 'text-[#4E5968] hover:text-[#191F28]'
             }`}
           >
-            수련회·행사 청구서
+            특별예산·청구서 ({claims.length})
           </button>
         </div>
+
+        {/* 1-2. 복수 특별예산 청구서 선택 및 추가 바 */}
+        {activeTemplate === 'retreat_claim' && (
+          <div className="bg-[#F9FAFB] rounded-2xl p-2.5 sm:p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[12px] font-bold text-[#4E5968] shrink-0">
+                청구서 목록 ({claims.length}건)
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDuplicateActiveClaim}
+                  className="h-7 px-2.5 rounded-lg bg-[#FFFFFF] border border-[#E5E8EB] text-[#4E5968] text-[11.5px] font-semibold inline-flex items-center gap-1 whitespace-nowrap active:scale-[0.97]"
+                >
+                  <Copy className="w-3 h-3 shrink-0" />
+                  <span>복제</span>
+                </button>
+                {claims.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteActiveClaim}
+                    className="h-7 px-2.5 rounded-lg bg-[#FFEEF0] text-[#F04452] text-[11.5px] font-semibold inline-flex items-center gap-1 whitespace-nowrap active:scale-[0.97]"
+                  >
+                    <Trash2 className="w-3 h-3 shrink-0" />
+                    <span>삭제</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleAddNewClaim}
+                  className="h-7 px-2.5 rounded-lg bg-[#3182F6] text-[#FFFFFF] text-[11.5px] font-bold inline-flex items-center gap-1 whitespace-nowrap active:scale-[0.97]"
+                >
+                  <Plus className="w-3 h-3 shrink-0" />
+                  <span>새 청구서</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              {claims.map((claimDoc, idx) => {
+                const isSelected = claimDoc.id === activeClaimDoc.id;
+                const claimNet = Math.max(
+                  0,
+                  claimDoc.items
+                    .filter((i) => i.entryType !== 'income')
+                    .reduce((s, i) => s + (Number(i.amount) || 0), 0) -
+                    (Number(claimDoc.selfBurdenAmount) || 0)
+                );
+                const shortLabel =
+                  claimDoc.eventName?.trim() ||
+                  claimDoc.title?.trim() ||
+                  `특별예산 청구서 #${idx + 1}`;
+                return (
+                  <button
+                    key={claimDoc.id || `claim-${idx}`}
+                    type="button"
+                    onClick={() =>
+                      setActiveClaimId(claimDoc.id || `claim-${idx + 1}`)
+                    }
+                    className={`h-9 px-3 rounded-xl text-[12px] font-semibold inline-flex items-center gap-1.5 shrink-0 max-w-[240px] transition-all active:scale-[0.97] ${
+                      isSelected
+                        ? 'bg-[#191F28] text-[#FFFFFF]'
+                        : 'bg-[#FFFFFF] text-[#4E5968] border border-[#E5E8EB] hover:bg-[#F2F4F6]'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                    <span className="truncate">{shortLabel}</span>
+                    {claimNet > 0 && (
+                      <span
+                        className={`text-[11px] font-bold tabular-nums shrink-0 ${
+                          isSelected ? 'text-[#93C5FD]' : 'text-[#3182F6]'
+                        }`}
+                      >
+                        {formatWon(claimNet)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 2. 편집 / A4 미리보기 전환 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#F9FAFB] p-2 rounded-2xl">

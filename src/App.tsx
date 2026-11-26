@@ -22,7 +22,7 @@ import {
   ActiveViewMode,
   AppSettings,
   BudgetDocument,
-  BudgetTemplateType,
+  FiscalYearCloudRef,
   MokjangExpenseSubType,
   MokjangGroup,
   ProcessedTransaction,
@@ -39,6 +39,7 @@ import {
   getSpreadsheetModifiedTime,
   GoogleSession,
   GoogleWorkspaceInfo,
+  listDriveFiscalYears,
   loadGoogleSession,
   pullAllFromGoogleSheets,
   pushAllToGoogleSheets,
@@ -50,14 +51,18 @@ import { notifyReceiptAuthChanged } from './utils/receiptImageLoader';
 import {
   BudgetsMap,
   computeMonthlyLedger,
+  computeYearEndBalancesByAccount,
   deriveDynamicFiscalSchema,
   enrichAllTransactionsWithEvidence,
+  normalizeBudgetsMap,
   syncBudgetsWithDepartment,
   SyncManager,
 } from './utils/syncManager';
 import { BudgetBuilderView } from './components/BudgetBuilderView';
+import { FiscalPeriodModal } from './components/FiscalPeriodModal';
 import { LedgerView } from './components/LedgerView';
 import { MokjangDashboardView } from './components/MokjangDashboardView';
+import { NewFiscalYearModal } from './components/NewFiscalYearModal';
 import { PrintCenterView } from './components/PrintCenterView';
 import {
   SettingsTabType,
@@ -65,15 +70,6 @@ import {
 } from './components/SyncSettingsModal';
 import { TdsDialog } from './components/TdsDialog';
 import { TransactionBottomSheet } from './components/TransactionBottomSheet';
-
-const AVAILABLE_MONTHS = [
-  '2026-09',
-  '2026-10',
-  '2026-11',
-  '2026-12',
-  '2027-01',
-  '2027-02',
-];
 
 const AUTO_SYNC_DEBOUNCE_MS = 2000;
 const VISIBILITY_PULL_THROTTLE_MS = 15_000;
@@ -126,31 +122,103 @@ function isRemoteTimestampNewer(
   return remoteIso !== localIso;
 }
 
+function pickDefaultMonthForFiscalYear(
+  fiscalYear: number,
+  txs: Transaction[],
+  isProductionMode: boolean
+): string {
+  const now = new Date();
+  if (now.getFullYear() === fiscalYear) {
+    return `${fiscalYear}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  if (!isProductionMode && fiscalYear === 2026) {
+    return '2026-11';
+  }
+  const yearMonths = txs
+    .map((tx) => tx.date?.slice(0, 7) || '')
+    .filter((ym) => ym.startsWith(`${fiscalYear}-`))
+    .sort();
+  if (yearMonths.length > 0) {
+    return yearMonths[yearMonths.length - 1];
+  }
+  return `${fiscalYear}-01`;
+}
+
+function applyCloudRefToSettings(
+  base: AppSettings,
+  fiscalYear: number,
+  ref?: FiscalYearCloudRef | null
+): AppSettings {
+  const fyKey = String(fiscalYear);
+  const nextMap: Record<string, FiscalYearCloudRef> = {
+    ...(base.fiscalYearWorkspaces || {}),
+  };
+  if (ref) {
+    nextMap[fyKey] = ref;
+  }
+  return {
+    ...base,
+    fiscalYearWorkspaces: nextMap,
+    googleSpreadsheetId: ref?.spreadsheetId || '',
+    googleSpreadsheetUrl: ref?.spreadsheetUrl || '',
+    googleReceiptFolderId: ref?.receiptFolderId || '',
+    googleReceiptFolderUrl: ref?.receiptFolderUrl || '',
+    lastSyncedAt: ref?.lastSyncedAt,
+    lastCloudModifiedTime: ref?.lastCloudModifiedTime,
+  };
+}
+
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveViewMode>('ledger');
-  const [yearMonth, setYearMonth] = useState<string>('2026-11');
+  const [activeFiscalYear, setActiveFiscalYear] = useState<number>(() =>
+    SyncManager.loadActiveFiscalYear()
+  );
+  const activeFiscalYearRef = useRef<number>(activeFiscalYear);
+  activeFiscalYearRef.current = activeFiscalYear;
+
+  const [availableFiscalYears, setAvailableFiscalYears] = useState<number[]>(
+    () => SyncManager.loadKnownFiscalYears()
+  );
+  const [isPeriodModalOpen, setIsPeriodModalOpen] = useState<boolean>(false);
+  const [isNewFiscalYearOpen, setIsNewFiscalYearOpen] = useState<boolean>(false);
+  const [isSwitchingYear, setIsSwitchingYear] = useState<boolean>(false);
+
   const [accountFilter, setAccountFilter] = useState<AccountType>('all');
 
   const [transactions, setTransactions] = useState<Transaction[]>(() =>
-    SyncManager.loadTransactions()
+    SyncManager.loadTransactions(SyncManager.loadActiveFiscalYear())
   );
   const [budgets, setBudgets] = useState<BudgetsMap>(() =>
-    SyncManager.loadBudgets()
+    SyncManager.loadBudgets(SyncManager.loadActiveFiscalYear())
   );
   const budgetsRef = useRef<BudgetsMap>(budgets);
   budgetsRef.current = budgets;
   const pendingDeptHealSyncRef = useRef<boolean>(false);
   const [mokjangs, setMokjangs] = useState<MokjangGroup[]>(() =>
-    SyncManager.loadMokjangs()
+    SyncManager.loadMokjangs(SyncManager.loadActiveFiscalYear())
   );
-  const [settings, setSettings] = useState<AppSettings>(() =>
-    SyncManager.loadSettings()
-  );
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const fy = SyncManager.loadActiveFiscalYear();
+    const loaded = SyncManager.loadSettings();
+    const ref = loaded.fiscalYearWorkspaces?.[String(fy)];
+    return ref ? applyCloudRefToSettings(loaded, fy, ref) : loaded;
+  });
   const settingsRef = useRef<AppSettings>(settings);
   settingsRef.current = settings;
 
+  const [yearMonth, setYearMonth] = useState<string>(() => {
+    const fy = SyncManager.loadActiveFiscalYear();
+    const loadedSettings = SyncManager.loadSettings();
+    const loadedTxs = SyncManager.loadTransactions(fy);
+    return pickDefaultMonthForFiscalYear(
+      fy,
+      loadedTxs,
+      loadedSettings.isProductionMode
+    );
+  });
+
   const [receiptLayouts, setReceiptLayouts] = useState<ReceiptBookLayoutsMap>(
-    () => SyncManager.loadReceiptLayouts()
+    () => SyncManager.loadReceiptLayouts(SyncManager.loadActiveFiscalYear())
   );
   const receiptLayoutsRef = useRef<ReceiptBookLayoutsMap>(receiptLayouts);
   receiptLayoutsRef.current = receiptLayouts;
@@ -253,29 +321,44 @@ export const App: React.FC = () => {
     [budgets.annual_budget, settings, transactions]
   );
 
-  const stepMonth = (delta: -1 | 1) => {
-    const [y, m] = yearMonth.split('-').map(Number);
-    const date = new Date(y, m - 1 + delta, 1);
-    const nextYm = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
-      2,
-      '0'
-    )}`;
-    setYearMonth(nextYm);
-  };
+  const monthlyTxCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tx of transactions) {
+      const ym = tx.date?.slice(0, 7);
+      if (ym) {
+        counts[ym] = (counts[ym] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [transactions]);
+
+  const currentYearClosingBalances = useMemo(
+    () => computeYearEndBalancesByAccount(transactions),
+    [transactions]
+  );
+
+  const mergeDiscoveredFiscalYears = useCallback((years: number[]) => {
+    let nextYears = SyncManager.loadKnownFiscalYears();
+    for (const y of years) {
+      nextYears = SyncManager.registerFiscalYear(y);
+    }
+    setAvailableFiscalYears(nextYears);
+  }, []);
 
   const handleSaveTransaction = async (savedTx: Transaction) => {
+    const fy = activeFiscalYearRef.current;
     const exists = transactions.some((t) => t.id === savedTx.id);
     const nextTransactions = exists
       ? transactions.map((t) => (t.id === savedTx.id ? savedTx : t))
       : [...transactions, savedTx];
 
     setTransactions(nextTransactions);
-    const savedLocal = SyncManager.saveTransactions(nextTransactions);
+    const savedLocal = SyncManager.saveTransactions(nextTransactions, fy);
     setStorageQuotaWarning(!savedLocal);
     bumpDataRevision();
 
     const txYm = savedTx.date.slice(0, 7);
-    if (txYm !== yearMonth) {
+    if (txYm.startsWith(`${fy}-`) && txYm !== yearMonth) {
       setYearMonth(txYm);
     }
 
@@ -307,7 +390,7 @@ export const App: React.FC = () => {
                 : t
             );
             setTransactions(withDrive);
-            const savedDriveLocal = SyncManager.saveTransactions(withDrive);
+            const savedDriveLocal = SyncManager.saveTransactions(withDrive, fy);
             setStorageQuotaWarning(!savedDriveLocal);
           }
           setSyncStatus('synced');
@@ -321,11 +404,11 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteTransaction = async (id: string) => {
+    const fy = activeFiscalYearRef.current;
     const nextTransactions = transactions.filter((t) => t.id !== id);
     setTransactions(nextTransactions);
-    const savedLocal = SyncManager.saveTransactions(nextTransactions);
+    const savedLocal = SyncManager.saveTransactions(nextTransactions, fy);
     if (savedLocal) setStorageQuotaWarning(false);
-    bumpDataRevision();
     bumpDataRevision();
 
     if (settings.gasWebAppUrl.trim()) {
@@ -339,22 +422,19 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleUpdateBudget = (
-    templateType: BudgetTemplateType,
-    nextDoc: BudgetDocument
-  ) => {
-    const nextBudgets: BudgetsMap = {
-      ...budgets,
-      [templateType]: nextDoc,
-    };
-    setBudgets(nextBudgets);
-    SyncManager.saveBudgets(nextBudgets);
+  const handleUpdateBudgets = (nextBudgets: BudgetsMap) => {
+    const fy = activeFiscalYearRef.current;
+    const normalized = normalizeBudgetsMap(nextBudgets, fy);
+    setBudgets(normalized);
+    budgetsRef.current = normalized;
+    SyncManager.saveBudgets(normalized, fy);
     bumpDataRevision();
   };
 
   const handleUpdateMokjangs = (nextMokjangs: MokjangGroup[]) => {
+    const fy = activeFiscalYearRef.current;
     setMokjangs(nextMokjangs);
-    SyncManager.saveMokjangs(nextMokjangs);
+    SyncManager.saveMokjangs(nextMokjangs, fy);
     bumpDataRevision();
   };
 
@@ -363,12 +443,14 @@ export const App: React.FC = () => {
     newCategory: string,
     monthlyBudgetAmount?: number
   ) => {
+    const fy = activeFiscalYearRef.current;
     if (type === 'income') {
       const nextCustom = Array.from(
         new Set([...(settings.customIncomeCategories || []), newCategory])
       );
       const nextSettings = { ...settings, customIncomeCategories: nextCustom };
       setSettings(nextSettings);
+      settingsRef.current = nextSettings;
       SyncManager.saveSettings(nextSettings);
     } else {
       const nextCustom = Array.from(
@@ -376,6 +458,7 @@ export const App: React.FC = () => {
       );
       const nextSettings = { ...settings, customExpenseCategories: nextCustom };
       setSettings(nextSettings);
+      settingsRef.current = nextSettings;
       SyncManager.saveSettings(nextSettings);
 
       if (monthlyBudgetAmount && monthlyBudgetAmount > 0) {
@@ -395,9 +478,13 @@ export const App: React.FC = () => {
             },
           ],
         };
-        handleUpdateBudget('annual_budget', nextAnnualDoc);
+        handleUpdateBudgets({
+          ...budgets,
+          annual_budget: nextAnnualDoc,
+        });
       }
     }
+    void fy;
   };
 
   const handleUpdateSettings = (nextSettings: AppSettings) => {
@@ -418,7 +505,7 @@ export const App: React.FC = () => {
     if (budgetsChanged) {
       setBudgets(syncedBudgets);
       budgetsRef.current = syncedBudgets;
-      SyncManager.saveBudgets(syncedBudgets);
+      SyncManager.saveBudgets(syncedBudgets, activeFiscalYearRef.current);
     }
 
     bumpDataRevision();
@@ -437,7 +524,10 @@ export const App: React.FC = () => {
       };
       receiptLayoutsRef.current = next;
       setReceiptLayouts(next);
-      const saved = SyncManager.saveReceiptLayouts(next);
+      const saved = SyncManager.saveReceiptLayouts(
+        next,
+        activeFiscalYearRef.current
+      );
       if (!saved) {
         setStorageQuotaWarning(true);
       } else {
@@ -449,13 +539,14 @@ export const App: React.FC = () => {
   );
 
   /**
-   * 구글 시트에서 전체 데이터를 내려받아 로컬 상태와 저장소에 원자적으로 반영합니다.
+   * 구글 시트에서 특정 회계연도의 전체 데이터를 내려받아 로컬 상태와 저장소에 원자적으로 반영합니다.
    */
   const applyCloudPull = useCallback(
     async (
       accessToken: string,
       spreadsheetId: string,
-      baseSettings: AppSettings
+      baseSettings: AppSettings,
+      targetYear = activeFiscalYearRef.current
     ) => {
       if (isPullingGoogleRef.current) return null;
       isPullingGoogleRef.current = true;
@@ -464,7 +555,8 @@ export const App: React.FC = () => {
         const pulled = await pullAllFromGoogleSheets(
           accessToken,
           spreadsheetId,
-          baseSettings
+          baseSettings,
+          targetYear
         );
         const { budgets: normalizedBudgets, changed: deptHealed } =
           syncBudgetsWithDepartment(
@@ -473,33 +565,70 @@ export const App: React.FC = () => {
             undefined,
             pulled.settings.authorName
           );
-        setTransactions(pulled.transactions);
-        const savedTx = SyncManager.saveTransactions(pulled.transactions);
-        setMokjangs(pulled.mokjangs);
-        SyncManager.saveMokjangs(pulled.mokjangs);
-        setBudgets(normalizedBudgets);
-        budgetsRef.current = normalizedBudgets;
-        SyncManager.saveBudgets(normalizedBudgets);
-        setSettings(pulled.settings);
-        settingsRef.current = pulled.settings;
-        SyncManager.saveSettings(pulled.settings);
-        setReceiptLayouts(pulled.receiptLayouts);
-        receiptLayoutsRef.current = pulled.receiptLayouts;
-        const savedLayouts = SyncManager.saveReceiptLayouts(
-          pulled.receiptLayouts
+        const existingRef = baseSettings.fiscalYearWorkspaces?.[String(targetYear)];
+        const updatedRef: FiscalYearCloudRef = {
+          folderId: existingRef?.folderId,
+          folderUrl: existingRef?.folderUrl,
+          spreadsheetId,
+          spreadsheetUrl:
+            existingRef?.spreadsheetUrl ||
+            baseSettings.googleSpreadsheetUrl ||
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+          receiptFolderId:
+            existingRef?.receiptFolderId ||
+            baseSettings.googleReceiptFolderId ||
+            '',
+          receiptFolderUrl:
+            existingRef?.receiptFolderUrl ||
+            baseSettings.googleReceiptFolderUrl ||
+            '',
+          lastSyncedAt: pulled.settings.lastSyncedAt,
+          lastCloudModifiedTime:
+            pulled.remoteModifiedTime || pulled.settings.lastCloudModifiedTime,
+        };
+        const syncedSettings = applyCloudRefToSettings(
+          pulled.settings,
+          targetYear,
+          updatedRef
         );
-        setStorageQuotaWarning(!savedTx || !savedLayouts);
-        if (deptHealed) {
-          bumpDataRevision();
-        } else {
-          lastSyncedRevisionRef.current = dataRevisionRef.current;
+
+        const savedTx = SyncManager.saveTransactions(
+          pulled.transactions,
+          targetYear
+        );
+        SyncManager.saveMokjangs(pulled.mokjangs, targetYear);
+        SyncManager.saveBudgets(normalizedBudgets, targetYear);
+        SyncManager.saveSettings(syncedSettings);
+        const savedLayouts = SyncManager.saveReceiptLayouts(
+          pulled.receiptLayouts,
+          targetYear
+        );
+
+        if (activeFiscalYearRef.current === targetYear) {
+          setTransactions(pulled.transactions);
+          setMokjangs(pulled.mokjangs);
+          setBudgets(normalizedBudgets);
+          budgetsRef.current = normalizedBudgets;
+          setSettings(syncedSettings);
+          settingsRef.current = syncedSettings;
+          setReceiptLayouts(pulled.receiptLayouts);
+          receiptLayoutsRef.current = pulled.receiptLayouts;
+          setStorageQuotaWarning(!savedTx || !savedLayouts);
+          if (deptHealed) {
+            bumpDataRevision();
+          } else {
+            lastSyncedRevisionRef.current = dataRevisionRef.current;
+          }
+          setSyncStatus('synced');
         }
-        setSyncStatus('synced');
         return {
           transactionCount: pulled.transactions.length,
           mokjangCount: pulled.mokjangs.length,
           annualBudgetCount: normalizedBudgets.annual_budget.items.length,
-          retreatBudgetCount: normalizedBudgets.retreat_claim.items.length,
+          retreatBudgetCount: normalizedBudgets.claims.reduce(
+            (sum, c) => sum + c.items.length,
+            0
+          ),
           remoteModifiedTime: pulled.remoteModifiedTime,
         };
       } catch (err) {
@@ -515,7 +644,7 @@ export const App: React.FC = () => {
   );
 
   /**
-   * Google OAuth 로그인 + 드라이브 통합 폴더/영수증 폴더/5개 시트 자동 연결 + 스마트 이어받기/충돌 보호
+   * Google OAuth 로그인 + 회계연도별 드라이브 폴더(청년부_회계_통합관리/YYYY년/) 자동 연결 + 스마트 이어받기/충돌 보호
    */
   const handleGoogleSignIn = async (
     clientId: string
@@ -535,33 +664,64 @@ export const App: React.FC = () => {
     setGoogleSession(session);
     setSyncStatus('syncing');
 
-    // 다른 계정으로 로그인한 경우 이전 계정의 spreadsheetId는 무시하고 새 계정 드라이브에서 탐색/생성
+    const fy = activeFiscalYearRef.current;
+
+    // 다른 계정으로 로그인한 경우 이전 계정의 워크스페이스 맵은 비우고 새 계정 드라이브에서 탐색/생성
     const isSameAccount = Boolean(
       settings.googleAccountEmail &&
         settings.googleAccountEmail === session.email
     );
-    const workspace = await ensureGoogleWorkspace(
-      session.accessToken,
-      settings.departmentName,
-      isSameAccount ? settings.googleSpreadsheetId : undefined
-    );
+    const existingFyRef = isSameAccount
+      ? settings.fiscalYearWorkspaces?.[String(fy)]
+      : undefined;
 
-    const nextSettings: AppSettings = {
+    const [workspace, remoteYears] = await Promise.all([
+      ensureGoogleWorkspace(
+        session.accessToken,
+        settings.departmentName,
+        fy,
+        existingFyRef?.spreadsheetId ||
+          (isSameAccount ? settings.googleSpreadsheetId : undefined)
+      ),
+      listDriveFiscalYears(session.accessToken),
+    ]);
+    mergeDiscoveredFiscalYears([...remoteYears, fy]);
+
+    const newFyRef: FiscalYearCloudRef = {
+      folderId: workspace.yearFolderId,
+      folderUrl: workspace.yearFolderUrl,
+      spreadsheetId: workspace.spreadsheetId,
+      spreadsheetUrl: workspace.spreadsheetUrl,
+      receiptFolderId: workspace.receiptFolderId,
+      receiptFolderUrl: workspace.receiptFolderUrl,
+      lastSyncedAt: isSameAccount ? existingFyRef?.lastSyncedAt : undefined,
+      lastCloudModifiedTime: isSameAccount
+        ? existingFyRef?.lastCloudModifiedTime || settings.lastCloudModifiedTime
+        : undefined,
+    };
+
+    const baseNextSettings: AppSettings = {
       ...settings,
       googleClientId: cleanClientId,
       googleAccountEmail: session.email,
       googleAccountName: session.name,
-      googleSpreadsheetId: workspace.spreadsheetId,
-      googleSpreadsheetUrl: workspace.spreadsheetUrl,
-      googleReceiptFolderId: workspace.receiptFolderId,
-      googleReceiptFolderUrl: workspace.receiptFolderUrl,
       googleAutoSync: settings.googleAutoSync ?? true,
+      fiscalYearWorkspaces: isSameAccount
+        ? settings.fiscalYearWorkspaces || {}
+        : {},
     };
+    const nextSettings = applyCloudRefToSettings(baseNextSettings, fy, newFyRef);
     setSettings(nextSettings);
     settingsRef.current = nextSettings;
     SyncManager.saveSettings(nextSettings);
 
-    // 1) 시트가 새로 생성되었거나 비어 있으면 전체 월 데이터를 즉시 첫 백업
+    if (workspace.migratedFromLegacyRoot) {
+      showSyncToast(
+        `기존 시트·영수증을 드라이브 [${fy}년] 폴더로 안전하게 정리했습니다`
+      );
+    }
+
+    // 1) 시트가 새로 생성되었거나 비어 있으면 해당 회기 전체 데이터를 즉시 첫 백업
     if (workspace.createdNewSpreadsheet || !workspace.hasExistingData) {
       const revisionAtPushStart = dataRevisionRef.current;
       const pushRes = await pushAllToGoogleSheets(
@@ -569,6 +729,7 @@ export const App: React.FC = () => {
         workspace.spreadsheetId,
         workspace.receiptFolderId,
         {
+          fiscalYear: fy,
           transactions: enrichAllTransactionsWithEvidence(transactions),
           budgets,
           mokjangs,
@@ -577,14 +738,16 @@ export const App: React.FC = () => {
         }
       );
       setTransactions(pushRes.updatedTransactions);
-      const savedTx = SyncManager.saveTransactions(pushRes.updatedTransactions);
+      const savedTx = SyncManager.saveTransactions(
+        pushRes.updatedTransactions,
+        fy
+      );
       setStorageQuotaWarning(!savedTx);
-      const syncedSettings: AppSettings = {
-        ...nextSettings,
+      const syncedSettings = applyCloudRefToSettings(nextSettings, fy, {
+        ...newFyRef,
         lastSyncedAt: pushRes.syncedAt,
-        lastCloudModifiedTime:
-          pushRes.remoteModifiedTime || pushRes.syncedAt,
-      };
+        lastCloudModifiedTime: pushRes.remoteModifiedTime || pushRes.syncedAt,
+      });
       setSettings(syncedSettings);
       settingsRef.current = syncedSettings;
       SyncManager.saveSettings(syncedSettings);
@@ -608,16 +771,15 @@ export const App: React.FC = () => {
       settings.googleAccountEmail &&
         settings.googleAccountEmail !== session.email
     );
+    const localKnownModified =
+      existingFyRef?.lastCloudModifiedTime || settings.lastCloudModifiedTime;
     const isSameCloudVersion = Boolean(
       isSameAccount &&
-        isSameCloudTimestamp(
-          workspace.remoteModifiedTime,
-          settings.lastCloudModifiedTime
-        )
+        isSameCloudTimestamp(workspace.remoteModifiedTime, localKnownModified)
     );
     const isCloudNewer = isRemoteTimestampNewer(
       workspace.remoteModifiedTime,
-      settings.lastCloudModifiedTime
+      localKnownModified
     );
 
     if (isSameCloudVersion && !hasLocalUnsavedEdits) {
@@ -643,9 +805,10 @@ export const App: React.FC = () => {
       await applyCloudPull(
         session.accessToken,
         workspace.spreadsheetId,
-        nextSettings
+        nextSettings,
+        fy
       );
-      showSyncToast('구글 드라이브의 최신 작업을 불러왔습니다');
+      showSyncToast(`구글 드라이브의 ${fy}년 최신 작업을 불러왔습니다`);
       return {
         session,
         workspace,
@@ -675,17 +838,19 @@ export const App: React.FC = () => {
   const handleResolveCloudConflict = async (choice: 'pull' | 'push') => {
     if (!pendingCloudConflict || isResolvingConflict) return;
     const conflict = pendingCloudConflict;
+    const fy = conflict.workspace.fiscalYear || activeFiscalYearRef.current;
     setIsResolvingConflict(true);
     try {
       if (choice === 'pull') {
         await applyCloudPull(
           conflict.session.accessToken,
           conflict.workspace.spreadsheetId,
-          conflict.nextSettings
+          conflict.nextSettings,
+          fy
         );
         pendingCloudConflictRef.current = null;
         setPendingCloudConflict(null);
-        showSyncToast('구글 드라이브 최신 작업을 이어받았습니다');
+        showSyncToast(`구글 드라이브의 ${fy}년 최신 작업을 이어받았습니다`);
       } else {
         setSyncStatus('syncing');
         const revisionAtPushStart = dataRevisionRef.current;
@@ -694,6 +859,7 @@ export const App: React.FC = () => {
           conflict.workspace.spreadsheetId,
           conflict.workspace.receiptFolderId,
           {
+            fiscalYear: fy,
             transactions: enrichAllTransactionsWithEvidence(transactions),
             budgets,
             mokjangs,
@@ -703,15 +869,26 @@ export const App: React.FC = () => {
         );
         setTransactions(pushRes.updatedTransactions);
         const savedTx = SyncManager.saveTransactions(
-          pushRes.updatedTransactions
+          pushRes.updatedTransactions,
+          fy
         );
         setStorageQuotaWarning(!savedTx);
-        const syncedSettings: AppSettings = {
-          ...conflict.nextSettings,
-          lastSyncedAt: pushRes.syncedAt,
-          lastCloudModifiedTime:
-            pushRes.remoteModifiedTime || pushRes.syncedAt,
-        };
+        const prevRef = conflict.nextSettings.fiscalYearWorkspaces?.[String(fy)];
+        const syncedSettings = applyCloudRefToSettings(
+          conflict.nextSettings,
+          fy,
+          {
+            folderId: prevRef?.folderId || conflict.workspace.yearFolderId,
+            folderUrl: prevRef?.folderUrl || conflict.workspace.yearFolderUrl,
+            spreadsheetId: conflict.workspace.spreadsheetId,
+            spreadsheetUrl: conflict.workspace.spreadsheetUrl,
+            receiptFolderId: conflict.workspace.receiptFolderId,
+            receiptFolderUrl: conflict.workspace.receiptFolderUrl,
+            lastSyncedAt: pushRes.syncedAt,
+            lastCloudModifiedTime:
+              pushRes.remoteModifiedTime || pushRes.syncedAt,
+          }
+        );
         setSettings(syncedSettings);
         settingsRef.current = syncedSettings;
         SyncManager.saveSettings(syncedSettings);
@@ -719,7 +896,7 @@ export const App: React.FC = () => {
         setSyncStatus('synced');
         pendingCloudConflictRef.current = null;
         setPendingCloudConflict(null);
-        showSyncToast('이 기기의 전체 데이터로 구글 드라이브를 업데이트했습니다');
+        showSyncToast(`이 기기의 ${fy}년 데이터로 구글 드라이브를 업데이트했습니다`);
       }
     } catch (err) {
       setSyncStatus('error');
@@ -738,6 +915,7 @@ export const App: React.FC = () => {
     async (silent = false) => {
       if (isPushingGoogleRef.current || pendingCloudConflictRef.current) return;
       const activeSession = loadGoogleSession();
+      const fy = activeFiscalYearRef.current;
       if (
         !activeSession ||
         !settings.googleSpreadsheetId ||
@@ -756,12 +934,18 @@ export const App: React.FC = () => {
       isPushingGoogleRef.current = true;
       setSyncStatus('syncing');
       const revisionAtPushStart = dataRevisionRef.current;
+      const sheetIdAtPush = settings.googleSpreadsheetId;
+      const sheetUrlAtPush = settings.googleSpreadsheetUrl || '';
+      const receiptIdAtPush = settings.googleReceiptFolderId;
+      const receiptUrlAtPush = settings.googleReceiptFolderUrl || '';
+
       try {
         const res = await pushAllToGoogleSheets(
           activeSession.accessToken,
-          settings.googleSpreadsheetId,
-          settings.googleReceiptFolderId,
+          sheetIdAtPush,
+          receiptIdAtPush,
           {
+            fiscalYear: fy,
             transactions: enrichAllTransactionsWithEvidence(transactions),
             budgets,
             mokjangs,
@@ -769,23 +953,50 @@ export const App: React.FC = () => {
             receiptLayouts,
           }
         );
-        setTransactions(res.updatedTransactions);
-        const savedTx = SyncManager.saveTransactions(res.updatedTransactions);
-        setStorageQuotaWarning(!savedTx);
+        const savedTx = SyncManager.saveTransactions(res.updatedTransactions, fy);
+
         const latestSettings = settingsRef.current;
-        const syncedSettings: AppSettings = {
-          ...latestSettings,
+        const prevRef = latestSettings.fiscalYearWorkspaces?.[String(fy)];
+        const updatedRef: FiscalYearCloudRef = {
+          folderId: prevRef?.folderId,
+          folderUrl: prevRef?.folderUrl,
+          spreadsheetId: sheetIdAtPush,
+          spreadsheetUrl: sheetUrlAtPush,
+          receiptFolderId: receiptIdAtPush,
+          receiptFolderUrl: receiptUrlAtPush,
           lastSyncedAt: res.syncedAt,
           lastCloudModifiedTime:
             res.remoteModifiedTime ||
-            latestSettings.lastCloudModifiedTime ||
+            prevRef?.lastCloudModifiedTime ||
             res.syncedAt,
         };
-        setSettings(syncedSettings);
-        settingsRef.current = syncedSettings;
-        SyncManager.saveSettings(syncedSettings);
-        lastSyncedRevisionRef.current = revisionAtPushStart;
-        setSyncStatus('synced');
+
+        if (activeFiscalYearRef.current === fy) {
+          setTransactions(res.updatedTransactions);
+          setStorageQuotaWarning(!savedTx);
+          const syncedSettings = applyCloudRefToSettings(
+            latestSettings,
+            fy,
+            updatedRef
+          );
+          setSettings(syncedSettings);
+          settingsRef.current = syncedSettings;
+          SyncManager.saveSettings(syncedSettings);
+          lastSyncedRevisionRef.current = revisionAtPushStart;
+          setSyncStatus('synced');
+        } else {
+          // 회기 전환 중 완료된 푸시는 해당 회기의 워크스페이스 메타만 안전하게 기록
+          const patchedSettings: AppSettings = {
+            ...latestSettings,
+            fiscalYearWorkspaces: {
+              ...(latestSettings.fiscalYearWorkspaces || {}),
+              [String(fy)]: updatedRef,
+            },
+          };
+          setSettings(patchedSettings);
+          settingsRef.current = patchedSettings;
+          SyncManager.saveSettings(patchedSettings);
+        }
       } catch (err) {
         const refreshed = loadGoogleSession();
         if (!refreshed) setGoogleSession(null);
@@ -800,6 +1011,7 @@ export const App: React.FC = () => {
 
   const handleGooglePullAll = async () => {
     const activeSession = loadGoogleSession();
+    const fy = activeFiscalYearRef.current;
     if (!activeSession || !settings.googleSpreadsheetId) {
       setGoogleSession(null);
       throw new Error(
@@ -810,16 +1022,346 @@ export const App: React.FC = () => {
     const pulledSummary = await applyCloudPull(
       activeSession.accessToken,
       settings.googleSpreadsheetId,
-      settings
+      settings,
+      fy
     );
     return (
       pulledSummary || {
         transactionCount: transactions.length,
         mokjangCount: mokjangs.length,
         annualBudgetCount: budgets.annual_budget.items.length,
-        retreatBudgetCount: budgets.retreat_claim.items.length,
+        retreatBudgetCount: budgets.claims.reduce(
+          (sum, c) => sum + c.items.length,
+          0
+        ),
       }
     );
+  };
+
+  /**
+   * 회계연도(회기) 전환: 현재 회기 미저장 변경분 선반영 → 대상 회기 로컬 로드 → 로그인 시 드라이브 연도 폴더 연결·불러오기
+   */
+  const handleSwitchFiscalYear = async (
+    targetYear: number,
+    preferredMonth?: string
+  ) => {
+    if (targetYear === activeFiscalYearRef.current || isSwitchingYear) return;
+    setIsSwitchingYear(true);
+
+    try {
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+
+      const activeSession = loadGoogleSession();
+      if (
+        activeSession &&
+        settingsRef.current.googleSpreadsheetId &&
+        settingsRef.current.googleReceiptFolderId &&
+        dataRevisionRef.current !== lastSyncedRevisionRef.current &&
+        !pendingCloudConflictRef.current
+      ) {
+        await handleGooglePushAll(true);
+      }
+
+      const hadLocalTarget = SyncManager.hasLocalFiscalYearData(targetYear);
+      SyncManager.saveActiveFiscalYear(targetYear);
+      activeFiscalYearRef.current = targetYear;
+      setActiveFiscalYear(targetYear);
+      mergeDiscoveredFiscalYears([targetYear]);
+
+      const nextTxs = SyncManager.loadTransactions(targetYear);
+      const nextBudgets = SyncManager.loadBudgets(targetYear);
+      const nextMokjangs = SyncManager.loadMokjangs(targetYear);
+      const nextLayouts = SyncManager.loadReceiptLayouts(targetYear);
+
+      setTransactions(nextTxs);
+      setBudgets(nextBudgets);
+      budgetsRef.current = nextBudgets;
+      setMokjangs(nextMokjangs);
+      setReceiptLayouts(nextLayouts);
+      receiptLayoutsRef.current = nextLayouts;
+      setAccountFilter('all');
+      setYearMonth(
+        preferredMonth && preferredMonth.startsWith(`${targetYear}-`)
+          ? preferredMonth
+          : pickDefaultMonthForFiscalYear(
+              targetYear,
+              nextTxs,
+              settingsRef.current.isProductionMode
+            )
+      );
+
+      // 전환 직후 불필요한 자동 푸시가 발생하지 않도록 리비전 기준선 동기화
+      lastSyncedRevisionRef.current = dataRevisionRef.current;
+
+      const existingRef =
+        settingsRef.current.fiscalYearWorkspaces?.[String(targetYear)] || null;
+      const switchedSettings = applyCloudRefToSettings(
+        settingsRef.current,
+        targetYear,
+        existingRef
+      );
+      setSettings(switchedSettings);
+      settingsRef.current = switchedSettings;
+      SyncManager.saveSettings(switchedSettings);
+
+      if (activeSession) {
+        setSyncStatus('syncing');
+        const workspace = await ensureGoogleWorkspace(
+          activeSession.accessToken,
+          switchedSettings.departmentName,
+          targetYear,
+          existingRef?.spreadsheetId
+        );
+        const cloudRef: FiscalYearCloudRef = {
+          folderId: workspace.yearFolderId,
+          folderUrl: workspace.yearFolderUrl,
+          spreadsheetId: workspace.spreadsheetId,
+          spreadsheetUrl: workspace.spreadsheetUrl,
+          receiptFolderId: workspace.receiptFolderId,
+          receiptFolderUrl: workspace.receiptFolderUrl,
+          lastSyncedAt: existingRef?.lastSyncedAt,
+          lastCloudModifiedTime: existingRef?.lastCloudModifiedTime,
+        };
+        const connectedSettings = applyCloudRefToSettings(
+          switchedSettings,
+          targetYear,
+          cloudRef
+        );
+        setSettings(connectedSettings);
+        settingsRef.current = connectedSettings;
+        SyncManager.saveSettings(connectedSettings);
+
+        const isCloudNewer = isRemoteTimestampNewer(
+          workspace.remoteModifiedTime,
+          existingRef?.lastCloudModifiedTime
+        );
+
+        if (workspace.hasExistingData && (!hadLocalTarget || isCloudNewer)) {
+          await applyCloudPull(
+            activeSession.accessToken,
+            workspace.spreadsheetId,
+            connectedSettings,
+            targetYear
+          );
+          const refreshedTxs = SyncManager.loadTransactions(targetYear);
+          if (!preferredMonth) {
+            setYearMonth(
+              pickDefaultMonthForFiscalYear(
+                targetYear,
+                refreshedTxs,
+                connectedSettings.isProductionMode
+              )
+            );
+          }
+        } else if (
+          (workspace.createdNewSpreadsheet || !workspace.hasExistingData) &&
+          (nextTxs.length > 0 ||
+            nextMokjangs.length > 0 ||
+            nextBudgets.annual_budget.items.length > 0)
+        ) {
+          const pushRes = await pushAllToGoogleSheets(
+            activeSession.accessToken,
+            workspace.spreadsheetId,
+            workspace.receiptFolderId,
+            {
+              fiscalYear: targetYear,
+              transactions: enrichAllTransactionsWithEvidence(nextTxs),
+              budgets: nextBudgets,
+              mokjangs: nextMokjangs,
+              settings: connectedSettings,
+              receiptLayouts: nextLayouts,
+            }
+          );
+          const savedSettings = applyCloudRefToSettings(
+            connectedSettings,
+            targetYear,
+            {
+              ...cloudRef,
+              lastSyncedAt: pushRes.syncedAt,
+              lastCloudModifiedTime:
+                pushRes.remoteModifiedTime || pushRes.syncedAt,
+            }
+          );
+          setSettings(savedSettings);
+          settingsRef.current = savedSettings;
+          SyncManager.saveSettings(savedSettings);
+          setSyncStatus('synced');
+        } else {
+          setSyncStatus('synced');
+        }
+      } else {
+        setSyncStatus(
+          switchedSettings.gasWebAppUrl.trim() ? 'synced' : 'local'
+        );
+      }
+
+      showSyncToast(`${targetYear}년 회기로 전환했습니다`);
+    } catch (err) {
+      showSyncToast(
+        err instanceof Error
+          ? err.message
+          : '회계연도 전환 중 오류가 발생했습니다.',
+        'warning'
+      );
+    } finally {
+      setIsSwitchingYear(false);
+    }
+  };
+
+  /**
+   * 새 회계연도(1월~12월) 생성 및 직전 회기 계정별 기말잔액 전기이월 + 드라이브 연도 폴더 자동 생성
+   */
+  const handleCreateFiscalYear = async (params: {
+    targetYear: number;
+    carryoverByAccount: { general: number; retreat: number; mission: number };
+    copyMokjangs: boolean;
+    copyAnnualBudget: boolean;
+  }) => {
+    if (isSwitchingYear) return;
+    setIsSwitchingYear(true);
+
+    try {
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+
+      const activeSession = loadGoogleSession();
+      if (
+        activeSession &&
+        settingsRef.current.googleSpreadsheetId &&
+        settingsRef.current.googleReceiptFolderId &&
+        dataRevisionRef.current !== lastSyncedRevisionRef.current &&
+        !pendingCloudConflictRef.current
+      ) {
+        await handleGooglePushAll(true);
+      }
+
+      const created = SyncManager.createFiscalYearWorkspace({
+        targetYear: params.targetYear,
+        carryoverByAccount: params.carryoverByAccount,
+        copyMokjangsFrom: params.copyMokjangs ? mokjangs : undefined,
+        copyAnnualBudgetFrom: params.copyAnnualBudget
+          ? budgets.annual_budget
+          : undefined,
+        settings: settingsRef.current,
+      });
+
+      activeFiscalYearRef.current = params.targetYear;
+      setActiveFiscalYear(params.targetYear);
+      mergeDiscoveredFiscalYears([params.targetYear]);
+
+      setTransactions(created.transactions);
+      setBudgets(created.budgets);
+      budgetsRef.current = created.budgets;
+      setMokjangs(created.mokjangs);
+      setReceiptLayouts(created.receiptLayouts);
+      receiptLayoutsRef.current = created.receiptLayouts;
+      setAccountFilter('all');
+      setYearMonth(`${params.targetYear}-01`);
+      lastSyncedRevisionRef.current = dataRevisionRef.current;
+
+      const baseSettings: AppSettings = applyCloudRefToSettings(
+        {
+          ...settingsRef.current,
+          isProductionMode: true,
+        },
+        params.targetYear,
+        null
+      );
+      setSettings(baseSettings);
+      settingsRef.current = baseSettings;
+      SyncManager.saveSettings(baseSettings);
+
+      if (activeSession) {
+        setSyncStatus('syncing');
+        const workspace = await ensureGoogleWorkspace(
+          activeSession.accessToken,
+          baseSettings.departmentName,
+          params.targetYear
+        );
+        const cloudRef: FiscalYearCloudRef = {
+          folderId: workspace.yearFolderId,
+          folderUrl: workspace.yearFolderUrl,
+          spreadsheetId: workspace.spreadsheetId,
+          spreadsheetUrl: workspace.spreadsheetUrl,
+          receiptFolderId: workspace.receiptFolderId,
+          receiptFolderUrl: workspace.receiptFolderUrl,
+        };
+        const linkedSettings = applyCloudRefToSettings(
+          baseSettings,
+          params.targetYear,
+          cloudRef
+        );
+        const pushRes = await pushAllToGoogleSheets(
+          activeSession.accessToken,
+          workspace.spreadsheetId,
+          workspace.receiptFolderId,
+          {
+            fiscalYear: params.targetYear,
+            transactions: enrichAllTransactionsWithEvidence(
+              created.transactions
+            ),
+            budgets: created.budgets,
+            mokjangs: created.mokjangs,
+            settings: linkedSettings,
+            receiptLayouts: created.receiptLayouts,
+          }
+        );
+        const syncedSettings = applyCloudRefToSettings(
+          linkedSettings,
+          params.targetYear,
+          {
+            ...cloudRef,
+            lastSyncedAt: pushRes.syncedAt,
+            lastCloudModifiedTime:
+              pushRes.remoteModifiedTime || pushRes.syncedAt,
+          }
+        );
+        setSettings(syncedSettings);
+        settingsRef.current = syncedSettings;
+        SyncManager.saveSettings(syncedSettings);
+        setSyncStatus('synced');
+      }
+
+      setIsNewFiscalYearOpen(false);
+      showSyncToast(
+        `${params.targetYear}년 회기를 시작했습니다 (드라이브 ${params.targetYear}년 폴더 분리 완료)`
+      );
+    } catch (err) {
+      showSyncToast(
+        err instanceof Error
+          ? err.message
+          : '새 회계연도 생성 중 오류가 발생했습니다.',
+        'warning'
+      );
+    } finally {
+      setIsSwitchingYear(false);
+    }
+  };
+
+  const stepMonth = (delta: -1 | 1) => {
+    const [y, m] = yearMonth.split('-').map(Number);
+    const nextMonth = m + delta;
+    if (nextMonth >= 1 && nextMonth <= 12) {
+      setYearMonth(`${y}-${String(nextMonth).padStart(2, '0')}`);
+      return;
+    }
+    const targetYear = nextMonth < 1 ? y - 1 : y + 1;
+    const targetYm = `${targetYear}-${nextMonth < 1 ? '12' : '01'}`;
+    if (availableFiscalYears.includes(targetYear)) {
+      void handleSwitchFiscalYear(targetYear, targetYm);
+    } else {
+      showSyncToast(
+        nextMonth > 12
+          ? `${y}년 마지막 달입니다. 연월을 눌러 ${targetYear}년 회기를 시작할 수 있어요`
+          : `${y}년 첫 달입니다. 연월을 눌러 다른 회기로 이동할 수 있어요`,
+        'info'
+      );
+    }
   };
 
   const handleGoogleSignOut = (disconnectSheet = false) => {
@@ -836,6 +1378,7 @@ export const App: React.FC = () => {
         googleSpreadsheetUrl: '',
         googleReceiptFolderId: '',
         googleReceiptFolderUrl: '',
+        fiscalYearWorkspaces: {},
         lastCloudModifiedTime: undefined,
       };
       setSettings(cleared);
@@ -863,7 +1406,7 @@ export const App: React.FC = () => {
     if (changed) {
       setBudgets(healedBudgets);
       budgetsRef.current = healedBudgets;
-      SyncManager.saveBudgets(healedBudgets);
+      SyncManager.saveBudgets(healedBudgets, activeFiscalYearRef.current);
       // 이미 로그인 세션이 살아 있는 경우에만 즉시 클라우드 반영(미로그인 시 재연결 직후 자동 반영)
       if (loadGoogleSession()) {
         bumpDataRevision();
@@ -926,11 +1469,16 @@ export const App: React.FC = () => {
 
       setGoogleSession(reconnected);
       try {
-        const meta = await getSpreadsheetModifiedTime(
-          reconnected.accessToken,
-          currentSettings.googleSpreadsheetId
-        );
+        const fy = activeFiscalYearRef.current;
+        const [meta, remoteYears] = await Promise.all([
+          getSpreadsheetModifiedTime(
+            reconnected.accessToken,
+            currentSettings.googleSpreadsheetId
+          ),
+          listDriveFiscalYears(reconnected.accessToken),
+        ]);
         if (cancelled) return;
+        mergeDiscoveredFiscalYears([...remoteYears, fy]);
         const isRemoteNewer = Boolean(
           !meta.trashed &&
             isRemoteTimestampNewer(
@@ -945,7 +1493,8 @@ export const App: React.FC = () => {
           await applyCloudPull(
             reconnected.accessToken,
             currentSettings.googleSpreadsheetId,
-            settingsRef.current
+            settingsRef.current,
+            fy
           );
           if (!cancelled) {
             showSyncToast('다른 기기의 최신 변경사항을 불러왔습니다');
@@ -965,7 +1514,7 @@ export const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [applyCloudPull, showSyncToast]);
+  }, [applyCloudPull, mergeDiscoveredFiscalYears, showSyncToast]);
 
   // 2) 탭 복귀(visibilitychange) 시 다른 기기의 최신 변경사항 자동 감지 및 Pull (15초 스로틀)
   useEffect(() => {
@@ -1095,25 +1644,36 @@ export const App: React.FC = () => {
     }
     if (Array.isArray(result.transactions)) {
       setTransactions(result.transactions);
-      const savedTx = SyncManager.saveTransactions(result.transactions);
+      const savedTx = SyncManager.saveTransactions(
+        result.transactions,
+        activeFiscalYearRef.current
+      );
       if (!savedTx) setStorageQuotaWarning(true);
     }
     if (result.budgets) {
-      const mergedBudgets: BudgetsMap = {
-        retreat_claim: result.budgets.retreat_claim || budgets.retreat_claim,
-        annual_budget: result.budgets.annual_budget || budgets.annual_budget,
-      };
+      const mergedBudgets = normalizeBudgetsMap(
+        {
+          annual_budget: result.budgets.annual_budget || budgets.annual_budget,
+          retreat_claim: result.budgets.retreat_claim || budgets.retreat_claim,
+          claims: result.budgets.claims || budgets.claims,
+        },
+        activeFiscalYearRef.current
+      );
       setBudgets(mergedBudgets);
-      SyncManager.saveBudgets(mergedBudgets);
+      budgetsRef.current = mergedBudgets;
+      SyncManager.saveBudgets(mergedBudgets, activeFiscalYearRef.current);
     }
     if (Array.isArray(result.mokjangs) && result.mokjangs.length > 0) {
       setMokjangs(result.mokjangs);
-      SyncManager.saveMokjangs(result.mokjangs);
+      SyncManager.saveMokjangs(result.mokjangs, activeFiscalYearRef.current);
     }
     if (result.receiptLayouts) {
       setReceiptLayouts(result.receiptLayouts);
       receiptLayoutsRef.current = result.receiptLayouts;
-      const savedLayouts = SyncManager.saveReceiptLayouts(result.receiptLayouts);
+      const savedLayouts = SyncManager.saveReceiptLayouts(
+        result.receiptLayouts,
+        activeFiscalYearRef.current
+      );
       if (!savedLayouts) setStorageQuotaWarning(true);
     }
     setSyncStatus('synced');
@@ -1149,30 +1709,38 @@ export const App: React.FC = () => {
           return;
         }
 
+        const fy = activeFiscalYearRef.current;
         setTransactions(result.transactions);
-        const savedTx = SyncManager.saveTransactions(result.transactions);
+        const savedTx = SyncManager.saveTransactions(result.transactions, fy);
 
-        const nextBudgets: BudgetsMap = {
-          annual_budget:
-            result.budgets.annual_budget || budgets.annual_budget,
-          retreat_claim:
-            result.budgets.retreat_claim || budgets.retreat_claim,
-        };
+        const nextBudgets = normalizeBudgetsMap(
+          {
+            annual_budget:
+              result.budgets.annual_budget || budgets.annual_budget,
+            retreat_claim:
+              result.budgets.retreat_claim || budgets.retreat_claim,
+            claims: result.budgets.claims || undefined,
+          },
+          fy
+        );
         setBudgets(nextBudgets);
-        SyncManager.saveBudgets(nextBudgets);
+        budgetsRef.current = nextBudgets;
+        SyncManager.saveBudgets(nextBudgets, fy);
 
         const nextMokjangs =
           result.mokjangs !== null ? result.mokjangs : mokjangs;
         if (result.mokjangs !== null) {
           setMokjangs(nextMokjangs);
-          SyncManager.saveMokjangs(nextMokjangs);
+          SyncManager.saveMokjangs(nextMokjangs, fy);
         }
 
         const nextReceiptLayouts = result.receiptLayouts ?? {};
         setReceiptLayouts(nextReceiptLayouts);
         receiptLayoutsRef.current = nextReceiptLayouts;
-        const savedLayouts =
-          SyncManager.saveReceiptLayouts(nextReceiptLayouts);
+        const savedLayouts = SyncManager.saveReceiptLayouts(
+          nextReceiptLayouts,
+          fy
+        );
         setStorageQuotaWarning(!savedTx || !savedLayouts);
 
         if (result.settings) {
@@ -1186,13 +1754,14 @@ export const App: React.FC = () => {
               '',
           };
           setSettings(merged);
+          settingsRef.current = merged;
           SyncManager.saveSettings(merged);
           setSyncStatus(merged.gasWebAppUrl.trim() ? 'synced' : 'local');
         }
 
         resolve({
           ok: true,
-          message: `전체 복원 완료 · 장부 ${result.transactions.length}건, 목장 ${nextMokjangs.length}개, 연간예산 ${nextBudgets.annual_budget.items.length}건, 청구서 ${nextBudgets.retreat_claim.items.length}건`,
+          message: `전체 복원 완료 (${fy}년) · 장부 ${result.transactions.length}건, 목장 ${nextMokjangs.length}개, 연간예산 ${nextBudgets.annual_budget.items.length}건, 청구서 ${nextBudgets.claims.length}건`,
         });
       };
       reader.onerror = () => {
@@ -1206,15 +1775,19 @@ export const App: React.FC = () => {
     initialCarryover: number,
     keepConnections: boolean
   ) => {
+    const fy = activeFiscalYearRef.current;
     const clean = SyncManager.resetAllDataClean(
       yearMonth,
       initialCarryover,
-      keepConnections
+      keepConnections,
+      fy
     );
     setTransactions(clean.transactions);
     setBudgets(clean.budgets);
+    budgetsRef.current = clean.budgets;
     setMokjangs(clean.mokjangs);
     setSettings(clean.settings);
+    settingsRef.current = clean.settings;
     setReceiptLayouts(clean.receiptLayouts);
     receiptLayoutsRef.current = clean.receiptLayouts;
     setStorageQuotaWarning(false);
@@ -1229,15 +1802,18 @@ export const App: React.FC = () => {
   };
 
   const handleResetSampleData = () => {
-    const reset = SyncManager.resetToSampleData();
+    const fy = activeFiscalYearRef.current;
+    const reset = SyncManager.resetToSampleData(fy);
     setTransactions(reset.transactions);
     setBudgets(reset.budgets);
+    budgetsRef.current = reset.budgets;
     setMokjangs(reset.mokjangs);
     setSettings(reset.settings);
+    settingsRef.current = reset.settings;
     setReceiptLayouts(reset.receiptLayouts);
     receiptLayoutsRef.current = reset.receiptLayouts;
     setStorageQuotaWarning(false);
-    setYearMonth('2026-11');
+    setYearMonth(`${fy}-11`);
     setAccountFilter('all');
     bumpDataRevision();
   };
@@ -1392,30 +1968,21 @@ export const App: React.FC = () => {
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <div className="relative flex items-center gap-0.5 sm:gap-1 px-1 sm:px-2 py-1 rounded-full focus-within:ring-2 focus-within:ring-[#3182F6]/30">
-                <Calendar className="hidden sm:block w-3.5 h-3.5 text-[#3182F6] shrink-0 pointer-events-none" />
-                <span className="text-[13px] sm:text-[15px] font-bold text-[#191F28] tabular-nums whitespace-nowrap pointer-events-none">
+              <button
+                type="button"
+                onClick={() => setIsPeriodModalOpen(true)}
+                aria-label="회계연도 및 귀속 월 선택"
+                className="flex items-center gap-0.5 sm:gap-1 px-1 sm:px-2 py-1 rounded-full hover:bg-[#E5E8EB]/60 active:scale-[0.97] transition-all"
+              >
+                <Calendar className="hidden sm:block w-3.5 h-3.5 text-[#3182F6] shrink-0" />
+                <span className="text-[13px] sm:text-[15px] font-bold text-[#191F28] tabular-nums whitespace-nowrap">
                   {formatYearMonthKorean(yearMonth)}
                 </span>
                 <ChevronDown
                   aria-hidden="true"
-                  className="w-3.5 h-3.5 text-[#4E5968] shrink-0 pointer-events-none"
+                  className="w-3.5 h-3.5 text-[#4E5968] shrink-0"
                 />
-                <select
-                  aria-label="귀속 연월 선택"
-                  value={yearMonth}
-                  onChange={(e) => setYearMonth(e.target.value)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                >
-                  {Array.from(new Set([...AVAILABLE_MONTHS, yearMonth]))
-                    .sort()
-                    .map((ym) => (
-                      <option key={ym} value={ym}>
-                        {formatYearMonthKorean(ym)}
-                      </option>
-                    ))}
-                </select>
-              </div>
+              </button>
 
               <button
                 type="button"
@@ -1694,8 +2261,9 @@ export const App: React.FC = () => {
 
         {activeView === 'budget_builder' && (
           <BudgetBuilderView
+            fiscalYear={activeFiscalYear}
             budgets={budgets}
-            onUpdateBudget={handleUpdateBudget}
+            onUpdateBudgets={handleUpdateBudgets}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             activeExpenseCategories={fiscalSchema.activeExpenseCategories}
@@ -1738,6 +2306,13 @@ export const App: React.FC = () => {
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         initialTab={settingsInitialTab}
+        activeFiscalYear={activeFiscalYear}
+        availableFiscalYears={availableFiscalYears}
+        onSwitchFiscalYear={(y) => void handleSwitchFiscalYear(y)}
+        onOpenNewFiscalYear={() => {
+          setIsSettingsOpen(false);
+          setIsNewFiscalYearOpen(true);
+        }}
         settings={settings}
         googleSession={googleSession}
         onSaveSettings={handleUpdateSettings}
@@ -1756,6 +2331,7 @@ export const App: React.FC = () => {
         }
         onExportJson={() =>
           SyncManager.exportBackupJson({
+            fiscalYear: activeFiscalYear,
             transactions,
             budgets,
             mokjangs,
@@ -1770,8 +2346,41 @@ export const App: React.FC = () => {
           transactionCount: transactions.length,
           mokjangCount: mokjangs.length,
           annualBudgetCount: budgets.annual_budget.items.length,
-          retreatBudgetCount: budgets.retreat_claim.items.length,
+          retreatBudgetCount: budgets.claims.reduce(
+            (sum, c) => sum + c.items.length,
+            0
+          ),
+          claimDocumentCount: budgets.claims.length,
         }}
+      />
+
+      {/* 회계연도(회기) 전환 및 1~12월 선택 모달 */}
+      <FiscalPeriodModal
+        open={isPeriodModalOpen}
+        onClose={() => setIsPeriodModalOpen(false)}
+        activeFiscalYear={activeFiscalYear}
+        yearMonth={yearMonth}
+        availableFiscalYears={availableFiscalYears}
+        cloudWorkspaces={settings.fiscalYearWorkspaces}
+        monthlyTxCounts={monthlyTxCounts}
+        isSwitchingYear={isSwitchingYear}
+        onSelectFiscalYear={(y) => void handleSwitchFiscalYear(y)}
+        onSelectMonth={(ym) => setYearMonth(ym)}
+        onOpenNewFiscalYear={() => setIsNewFiscalYearOpen(true)}
+      />
+
+      {/* 새 회계연도 시작(전기이월 자동 승계) 모달 */}
+      <NewFiscalYearModal
+        open={isNewFiscalYearOpen}
+        onClose={() => setIsNewFiscalYearOpen(false)}
+        sourceFiscalYear={activeFiscalYear}
+        existingYears={availableFiscalYears}
+        closingBalances={currentYearClosingBalances}
+        mokjangCount={mokjangs.length}
+        annualBudgetItemCount={budgets.annual_budget.items.length}
+        isGoogleConnected={Boolean(googleSession)}
+        isSubmitting={isSwitchingYear}
+        onCreateFiscalYear={handleCreateFiscalYear}
       />
 
       {/* 구글 드라이브 ↔ 이 기기 동기화 충돌 선택 다이얼로그 */}

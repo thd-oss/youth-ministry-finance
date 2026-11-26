@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   googleReceiptFolderId: '',
   googleReceiptFolderUrl: '',
   googleAutoSync: true,
+  fiscalYearWorkspaces: {},
   geminiApiKey: '',
   geminiModel: 'gemini-3-flash-preview',
   availableGeminiModels: [],
@@ -371,6 +372,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
 ];
 
 export const INITIAL_RETREAT_BUDGET: BudgetDocument = {
+  id: 'claim-1',
   templateType: 'retreat_claim',
   fiscalYear: 2026,
   title: '2026년 청년부 동계 수련회 재정 청구서',
@@ -439,6 +441,7 @@ export const INITIAL_RETREAT_BUDGET: BudgetDocument = {
 };
 
 export const INITIAL_ANNUAL_BUDGET: BudgetDocument = {
+  id: 'annual_budget',
   templateType: 'annual_budget',
   fiscalYear: 2026,
   title: '2026년도 청년부 연간 예산 심의안',

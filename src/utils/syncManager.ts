@@ -1,9 +1,11 @@
 import {
+  AccountBalancesSummary,
   AccountType,
   AppSettings,
   BudgetDocument,
   BudgetTemplateType,
   EXPENSE_CATEGORIES,
+  FiscalYearCloudRef,
   INCOME_CATEGORIES,
   MOKJANG_SUBTYPE_LABELS,
   MokjangGroup,
@@ -36,13 +38,48 @@ const STORAGE_KEYS = {
   MOKJANGS: 'tds_youth_finance_mokjangs_v2',
   SETTINGS: 'tds_youth_finance_settings_v2',
   RECEIPT_LAYOUTS: 'tds_youth_finance_receipt_layouts_v1',
+  ACTIVE_FISCAL_YEAR: 'tds_youth_finance_active_fy_v1',
+  KNOWN_FISCAL_YEARS: 'tds_youth_finance_known_fys_v1',
+  FY_MIGRATED_FLAG: 'tds_youth_finance_fy_migrated_v1',
 };
 
-const BACKUP_SCHEMA_VERSION = '3.1';
+const BACKUP_SCHEMA_VERSION = '4.0';
+export const DEFAULT_FISCAL_YEAR = 2026;
 const MONTHS_PER_YEAR = 12;
+const MIN_VALID_FISCAL_YEAR = 2020;
+const MAX_VALID_FISCAL_YEAR = 2099;
 const NORMALIZED_COORD_SCALE = 10000;
 const MIN_VALID_PLACEMENT_SIZE = 0.01;
 const MAX_NORMALIZED_BOUND_EPSILON = 1.001;
+
+export function isValidFiscalYear(year: unknown): year is number {
+  return (
+    typeof year === 'number' &&
+    Number.isInteger(year) &&
+    year >= MIN_VALID_FISCAL_YEAR &&
+    year <= MAX_VALID_FISCAL_YEAR
+  );
+}
+
+/**
+ * 1월~12월 기준 회계연도의 12개월 목록('YYYY-01' ~ 'YYYY-12')을 동적으로 생성합니다.
+ */
+export function getFiscalYearMonths(fiscalYear: number): string[] {
+  const safeYear = isValidFiscalYear(fiscalYear)
+    ? fiscalYear
+    : DEFAULT_FISCAL_YEAR;
+  return Array.from(
+    { length: MONTHS_PER_YEAR },
+    (_, idx) => `${safeYear}-${String(idx + 1).padStart(2, '0')}`
+  );
+}
+
+function fyStorageKey(
+  kind: 'transactions' | 'budgets' | 'mokjangs' | 'receipt_layouts',
+  fiscalYear: number
+): string {
+  return `tds_youth_finance_${kind}_fy_${fiscalYear}`;
+}
 
 function roundNormalizedCoord(value: number): number {
   return Math.round(value * NORMALIZED_COORD_SCALE) / NORMALIZED_COORD_SCALE;
@@ -409,8 +446,172 @@ export function sanitizeReceiptLayoutsMap(
 }
 
 export interface BudgetsMap {
-  retreat_claim: BudgetDocument;
+  retreat_claim: BudgetDocument; // 레거시 호환 미러 (항상 claims[0])
   annual_budget: BudgetDocument;
+  claims: BudgetDocument[]; // 한 회기 내 특별 예산(수련회·행사) 복수 청구서 목록
+}
+
+export function createBlankAnnualBudgetDocument(
+  fiscalYear: number,
+  departmentName = '청년부',
+  authorName = '',
+  authorRole = '청년부 회계',
+  bankDefaults?: {
+    bankName?: string;
+    accountNumber?: string;
+    accountHolder?: string;
+  }
+): BudgetDocument {
+  const dept = departmentName.trim() || '청년부';
+  return {
+    id: 'annual_budget',
+    templateType: 'annual_budget',
+    fiscalYear,
+    title: `${fiscalYear}년도 ${dept} 연간 예산 심의안`,
+    subtitle: '',
+    department: dept,
+    eventName: `${fiscalYear}년 연간 사역 예산`,
+    eventPeriod: `${fiscalYear}년 1월 1일 ~ ${fiscalYear}년 12월 31일`,
+    eventLocation: '',
+    participants: '',
+    proposerName: authorName.trim(),
+    proposerRole: authorRole.trim() || '청년부 회계',
+    requestDate: `${fiscalYear}-01-01`,
+    selfBurdenAmount: 0,
+    selfBurdenNote: '',
+    bankName: bankDefaults?.bankName || '',
+    accountNumber: bankDefaults?.accountNumber || '',
+    accountHolder: bankDefaults?.accountHolder || '',
+    purposeNote: `위와 같이 ${fiscalYear}년도 ${dept} 연간 사역 예산안을 편성하여 제출하오니 심의 및 승인하여 주시기 바랍니다.`,
+    items: [],
+  };
+}
+
+export function createBlankClaimDocument(
+  fiscalYear: number,
+  departmentName = '청년부',
+  authorName = '',
+  authorRole = '청년부 회계',
+  options?: {
+    id?: string;
+    title?: string;
+    requestDate?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountHolder?: string;
+  }
+): BudgetDocument {
+  const dept = departmentName.trim() || '청년부';
+  const id =
+    options?.id ||
+    `claim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const defaultRequestDate = todayIso.startsWith(`${fiscalYear}-`)
+    ? todayIso
+    : `${fiscalYear}-01-01`;
+  return {
+    id,
+    templateType: 'retreat_claim',
+    fiscalYear,
+    title: options?.title || `${fiscalYear}년 ${dept} 특별 예산 청구서`,
+    subtitle: '',
+    department: dept,
+    eventName: '',
+    eventPeriod: '',
+    eventLocation: '',
+    participants: '',
+    proposerName: authorName.trim(),
+    proposerRole: authorRole.trim() || '청년부 회계',
+    requestDate: options?.requestDate || defaultRequestDate,
+    selfBurdenAmount: 0,
+    selfBurdenNote: '',
+    bankName: options?.bankName || '',
+    accountNumber: options?.accountNumber || '',
+    accountHolder: options?.accountHolder || '',
+    purposeNote: `위와 같이 ${fiscalYear}년도 ${dept} 특별 사역 진행을 위한 예산을 산출하여 청구하오니 재가하여 주시기 바랍니다.`,
+    items: [],
+  };
+}
+
+/**
+ * 구버전(retreat_claim 단일) 및 신버전(claims[] 복수) BudgetsMap을
+ * 일관된 구조로 정규화합니다. 항상 claims.length >= 1 및 retreat_claim === claims[0]을 보장합니다.
+ */
+export function normalizeBudgetsMap(
+  raw?: Partial<BudgetsMap> | null,
+  fiscalYear = DEFAULT_FISCAL_YEAR,
+  fallbackAnnual?: BudgetDocument,
+  fallbackClaim?: BudgetDocument
+): BudgetsMap {
+  const annualBase = raw?.annual_budget || fallbackAnnual || INITIAL_ANNUAL_BUDGET;
+  const annual_budget: BudgetDocument = {
+    ...annualBase,
+    id: 'annual_budget',
+    templateType: 'annual_budget',
+    fiscalYear: annualBase.fiscalYear || fiscalYear,
+    items: Array.isArray(annualBase.items) ? annualBase.items : [],
+  };
+
+  let rawClaims: BudgetDocument[] = [];
+  if (Array.isArray(raw?.claims) && raw.claims.length > 0) {
+    rawClaims = raw.claims;
+  } else if (raw?.retreat_claim) {
+    rawClaims = [raw.retreat_claim];
+  } else if (fallbackClaim) {
+    rawClaims = [fallbackClaim];
+  } else {
+    rawClaims = [INITIAL_RETREAT_BUDGET];
+  }
+
+  const seenIds = new Set<string>();
+  const claims: BudgetDocument[] = rawClaims.map((c, idx) => {
+    let cid = typeof c.id === 'string' && c.id.trim() ? c.id.trim() : `claim-${idx + 1}`;
+    while (seenIds.has(cid)) {
+      cid = `${cid}-${idx + 1}`;
+    }
+    seenIds.add(cid);
+    return {
+      ...c,
+      id: cid,
+      templateType: 'retreat_claim',
+      fiscalYear: c.fiscalYear || fiscalYear,
+      items: Array.isArray(c.items) ? c.items : [],
+    };
+  });
+
+  return {
+    annual_budget,
+    retreat_claim: claims[0],
+    claims,
+  };
+}
+
+/**
+ * 특정 회계연도 전체 거래에서 통장 계정별 기말 잔액(일반/수련회/목적헌금/합계)을 계산합니다.
+ * 새 회계연도 개시 시 전기이월금 자동 산출에 사용합니다.
+ */
+export function computeYearEndBalancesByAccount(
+  transactions: Transaction[]
+): AccountBalancesSummary {
+  let general = 0;
+  let retreat = 0;
+  let mission = 0;
+  for (const tx of transactions) {
+    const signed = tx.type === 'income' ? Number(tx.amount) || 0 : -(Number(tx.amount) || 0);
+    if (tx.account === 'retreat') {
+      retreat += signed;
+    } else if (tx.account === 'mission') {
+      mission += signed;
+    } else {
+      general += signed;
+    }
+  }
+  return {
+    general,
+    retreat,
+    mission,
+    total: general + retreat + mission,
+  };
 }
 
 export interface SubCategoryBudgetAllocation {
@@ -555,7 +756,7 @@ export function syncBudgetDocumentWithDepartment(
 }
 
 /**
- * 연간 예산안 · 수련회 청구서 전체를 전역 부서명(SSOT)과 동기화합니다.
+ * 연간 예산안 · 복수 특별예산 청구서 전체를 전역 부서명(SSOT)과 동기화합니다.
  */
 export function syncBudgetsWithDepartment(
   budgets: BudgetsMap,
@@ -564,58 +765,276 @@ export function syncBudgetsWithDepartment(
   nextAuthorName?: string,
   prevAuthorName?: string
 ): { budgets: BudgetsMap; changed: boolean } {
+  const normalized = normalizeBudgetsMap(budgets);
   const annual = syncBudgetDocumentWithDepartment(
-    budgets.annual_budget,
+    normalized.annual_budget,
     nextDeptName,
     prevDeptName,
     nextAuthorName,
     prevAuthorName
   );
-  const retreat = syncBudgetDocumentWithDepartment(
-    budgets.retreat_claim,
-    nextDeptName,
-    prevDeptName,
-    nextAuthorName,
-    prevAuthorName
-  );
+  let claimsChanged = false;
+  const syncedClaims = normalized.claims.map((claimDoc) => {
+    const res = syncBudgetDocumentWithDepartment(
+      claimDoc,
+      nextDeptName,
+      prevDeptName,
+      nextAuthorName,
+      prevAuthorName
+    );
+    if (res.changed) claimsChanged = true;
+    return res.doc;
+  });
 
-  if (!annual.changed && !retreat.changed) {
-    return { budgets, changed: false };
+  if (!annual.changed && !claimsChanged) {
+    return { budgets: normalized, changed: false };
   }
 
   return {
     budgets: {
       annual_budget: annual.doc,
-      retreat_claim: retreat.doc,
+      retreat_claim: syncedClaims[0],
+      claims: syncedClaims,
     },
     changed: true,
   };
 }
 
-export const SyncManager = {
-  loadTransactions(): Transaction[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-      if (!raw) {
-        localStorage.setItem(
-          STORAGE_KEYS.TRANSACTIONS,
-          JSON.stringify(INITIAL_TRANSACTIONS)
-        );
-        return INITIAL_TRANSACTIONS;
+let legacyMigrationChecked = false;
+
+/**
+ * 기존 단일 연도(v2) 로컬 스토리지 데이터를 회계연도 네임스페이스(fy_YYYY)로
+ * 단 1회 무손실 자동 이관합니다. 기존 v2 키는 삭제하지 않고 안전 백업으로 보존합니다.
+ */
+function ensureLegacyMigratedToFiscalYear(): void {
+  if (legacyMigrationChecked || typeof localStorage === 'undefined') return;
+  legacyMigrationChecked = true;
+
+  try {
+    if (localStorage.getItem(STORAGE_KEYS.FY_MIGRATED_FLAG) === '1') {
+      return;
+    }
+
+    const legacyTxRaw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
+    const legacyBudgetsRaw = localStorage.getItem(STORAGE_KEYS.BUDGETS);
+    const legacyMokjangsRaw = localStorage.getItem(STORAGE_KEYS.MOKJANGS);
+    const legacyLayoutsRaw = localStorage.getItem(STORAGE_KEYS.RECEIPT_LAYOUTS);
+    const legacySettingsRaw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+
+    const hasLegacy = Boolean(
+      legacyTxRaw || legacyBudgetsRaw || legacyMokjangsRaw || legacyLayoutsRaw
+    );
+
+    let detectedYear = DEFAULT_FISCAL_YEAR;
+    if (legacyBudgetsRaw) {
+      try {
+        const parsedBudgets = JSON.parse(legacyBudgetsRaw);
+        const fy = Number(parsedBudgets?.annual_budget?.fiscalYear);
+        if (isValidFiscalYear(fy)) detectedYear = fy;
+      } catch {
+        // ignore
       }
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : INITIAL_TRANSACTIONS;
+    }
+
+    if (hasLegacy) {
+      if (
+        legacyTxRaw &&
+        !localStorage.getItem(fyStorageKey('transactions', detectedYear))
+      ) {
+        localStorage.setItem(
+          fyStorageKey('transactions', detectedYear),
+          legacyTxRaw
+        );
+      }
+      if (
+        legacyBudgetsRaw &&
+        !localStorage.getItem(fyStorageKey('budgets', detectedYear))
+      ) {
+        try {
+          const normalized = normalizeBudgetsMap(
+            JSON.parse(legacyBudgetsRaw),
+            detectedYear
+          );
+          localStorage.setItem(
+            fyStorageKey('budgets', detectedYear),
+            JSON.stringify(normalized)
+          );
+        } catch {
+          localStorage.setItem(
+            fyStorageKey('budgets', detectedYear),
+            legacyBudgetsRaw
+          );
+        }
+      }
+      if (
+        legacyMokjangsRaw &&
+        !localStorage.getItem(fyStorageKey('mokjangs', detectedYear))
+      ) {
+        localStorage.setItem(
+          fyStorageKey('mokjangs', detectedYear),
+          legacyMokjangsRaw
+        );
+      }
+      if (
+        legacyLayoutsRaw &&
+        !localStorage.getItem(fyStorageKey('receipt_layouts', detectedYear))
+      ) {
+        localStorage.setItem(
+          fyStorageKey('receipt_layouts', detectedYear),
+          legacyLayoutsRaw
+        );
+      }
+    }
+
+    // 기존 settings.googleSpreadsheetId를 fiscalYearWorkspaces[detectedYear]로 자동 이관
+    if (legacySettingsRaw) {
+      try {
+        const parsedSettings = JSON.parse(legacySettingsRaw) as AppSettings;
+        const fyKey = String(detectedYear);
+        const existingMap = parsedSettings.fiscalYearWorkspaces || {};
+        if (parsedSettings.googleSpreadsheetId && !existingMap[fyKey]) {
+          const ref: FiscalYearCloudRef = {
+            spreadsheetId: parsedSettings.googleSpreadsheetId,
+            spreadsheetUrl: parsedSettings.googleSpreadsheetUrl || '',
+            receiptFolderId: parsedSettings.googleReceiptFolderId || '',
+            receiptFolderUrl: parsedSettings.googleReceiptFolderUrl || '',
+            lastSyncedAt: parsedSettings.lastSyncedAt,
+            lastCloudModifiedTime: parsedSettings.lastCloudModifiedTime,
+          };
+          parsedSettings.fiscalYearWorkspaces = {
+            ...existingMap,
+            [fyKey]: ref,
+          };
+          localStorage.setItem(
+            STORAGE_KEYS.SETTINGS,
+            JSON.stringify(parsedSettings)
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!localStorage.getItem(STORAGE_KEYS.ACTIVE_FISCAL_YEAR)) {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_FISCAL_YEAR, String(detectedYear));
+    }
+    if (!localStorage.getItem(STORAGE_KEYS.KNOWN_FISCAL_YEARS)) {
+      localStorage.setItem(
+        STORAGE_KEYS.KNOWN_FISCAL_YEARS,
+        JSON.stringify([detectedYear])
+      );
+    }
+    localStorage.setItem(STORAGE_KEYS.FY_MIGRATED_FLAG, '1');
+  } catch (e) {
+    console.error('회계연도 마이그레이션 중 오류:', e);
+  }
+}
+
+export const SyncManager = {
+  loadActiveFiscalYear(): number {
+    ensureLegacyMigratedToFiscalYear();
+    try {
+      const raw = Number(localStorage.getItem(STORAGE_KEYS.ACTIVE_FISCAL_YEAR));
+      return isValidFiscalYear(raw) ? raw : DEFAULT_FISCAL_YEAR;
     } catch {
-      return INITIAL_TRANSACTIONS;
+      return DEFAULT_FISCAL_YEAR;
     }
   },
 
-  saveTransactions(transactions: Transaction[]): boolean {
+  saveActiveFiscalYear(fiscalYear: number): void {
+    if (!isValidFiscalYear(fiscalYear)) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_FISCAL_YEAR, String(fiscalYear));
+      this.registerFiscalYear(fiscalYear);
+    } catch {
+      // ignore
+    }
+  },
+
+  loadKnownFiscalYears(): number[] {
+    ensureLegacyMigratedToFiscalYear();
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.KNOWN_FISCAL_YEARS);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const active = this.loadActiveFiscalYear();
+      const years = new Set<number>([active]);
+      if (Array.isArray(parsed)) {
+        for (const y of parsed) {
+          const num = Number(y);
+          if (isValidFiscalYear(num)) years.add(num);
+        }
+      }
+      return Array.from(years).sort((a, b) => a - b);
+    } catch {
+      return [DEFAULT_FISCAL_YEAR];
+    }
+  },
+
+  registerFiscalYear(fiscalYear: number): number[] {
+    if (!isValidFiscalYear(fiscalYear)) return this.loadKnownFiscalYears();
+    const current = this.loadKnownFiscalYears();
+    if (!current.includes(fiscalYear)) {
+      const next = [...current, fiscalYear].sort((a, b) => a - b);
+      try {
+        localStorage.setItem(
+          STORAGE_KEYS.KNOWN_FISCAL_YEARS,
+          JSON.stringify(next)
+        );
+      } catch {
+        // ignore
+      }
+      return next;
+    }
+    return current;
+  },
+
+  hasLocalFiscalYearData(fiscalYear: number): boolean {
+    ensureLegacyMigratedToFiscalYear();
+    try {
+      return Boolean(
+        localStorage.getItem(fyStorageKey('transactions', fiscalYear)) ||
+          localStorage.getItem(fyStorageKey('budgets', fiscalYear)) ||
+          localStorage.getItem(fyStorageKey('mokjangs', fiscalYear))
+      );
+    } catch {
+      return false;
+    }
+  },
+
+  loadTransactions(fiscalYear?: number): Transaction[] {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
+    const key = fyStorageKey('transactions', resolvedYear);
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) {
+        const settings = this.loadSettings();
+        // 최초 샘플 모드의 기본 연도(2026)에만 샘플 거래 시딩, 새 회기는 빈 장부로 시작
+        if (resolvedYear === DEFAULT_FISCAL_YEAR && !settings.isProductionMode) {
+          localStorage.setItem(key, JSON.stringify(INITIAL_TRANSACTIONS));
+          return INITIAL_TRANSACTIONS;
+        }
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveTransactions(
+    transactions: Transaction[],
+    fiscalYear?: number
+  ): boolean {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     try {
       localStorage.setItem(
-        STORAGE_KEYS.TRANSACTIONS,
+        fyStorageKey('transactions', resolvedYear),
         JSON.stringify(transactions)
       );
+      this.registerFiscalYear(resolvedYear);
       return true;
     } catch (e) {
       console.error('LocalStorage 거래 저장 실패:', e);
@@ -623,64 +1042,113 @@ export const SyncManager = {
     }
   },
 
-  loadBudgets(): BudgetsMap {
+  loadBudgets(fiscalYear?: number): BudgetsMap {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
+    const key = fyStorageKey('budgets', resolvedYear);
+    const settings = this.loadSettings();
+    const blankAnnual = createBlankAnnualBudgetDocument(
+      resolvedYear,
+      settings.departmentName,
+      settings.authorName,
+      settings.authorRole
+    );
+    const blankClaim = createBlankClaimDocument(
+      resolvedYear,
+      settings.departmentName,
+      settings.authorName,
+      settings.authorRole,
+      { id: 'claim-1' }
+    );
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.BUDGETS);
+      const raw = localStorage.getItem(key);
       if (!raw) {
-        const initial: BudgetsMap = {
-          retreat_claim: INITIAL_RETREAT_BUDGET,
-          annual_budget: INITIAL_ANNUAL_BUDGET,
-        };
-        localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(initial));
+        const useSample =
+          resolvedYear === DEFAULT_FISCAL_YEAR && !settings.isProductionMode;
+        const initial = normalizeBudgetsMap(
+          useSample
+            ? {
+                annual_budget: INITIAL_ANNUAL_BUDGET,
+                retreat_claim: INITIAL_RETREAT_BUDGET,
+                claims: [INITIAL_RETREAT_BUDGET],
+              }
+            : {
+                annual_budget: blankAnnual,
+                retreat_claim: blankClaim,
+                claims: [blankClaim],
+              },
+          resolvedYear,
+          blankAnnual,
+          blankClaim
+        );
+        localStorage.setItem(key, JSON.stringify(initial));
         return initial;
       }
       const parsed = JSON.parse(raw);
-      return {
-        retreat_claim: parsed.retreat_claim || INITIAL_RETREAT_BUDGET,
-        annual_budget: parsed.annual_budget || INITIAL_ANNUAL_BUDGET,
-      };
+      return normalizeBudgetsMap(parsed, resolvedYear, blankAnnual, blankClaim);
     } catch {
-      return {
-        retreat_claim: INITIAL_RETREAT_BUDGET,
-        annual_budget: INITIAL_ANNUAL_BUDGET,
-      };
+      return normalizeBudgetsMap(null, resolvedYear, blankAnnual, blankClaim);
     }
   },
 
-  saveBudgets(budgets: BudgetsMap): void {
+  saveBudgets(
+    budgets: BudgetsMap,
+    fiscalYear?: number
+  ): void {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     try {
-      localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(budgets));
+      const normalized = normalizeBudgetsMap(budgets, resolvedYear);
+      localStorage.setItem(
+        fyStorageKey('budgets', resolvedYear),
+        JSON.stringify(normalized)
+      );
+      this.registerFiscalYear(resolvedYear);
     } catch (e) {
       console.error('LocalStorage 예산 저장 실패:', e);
     }
   },
 
-  loadMokjangs(): MokjangGroup[] {
+  loadMokjangs(fiscalYear?: number): MokjangGroup[] {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
+    const key = fyStorageKey('mokjangs', resolvedYear);
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.MOKJANGS);
+      const raw = localStorage.getItem(key);
       if (raw === null) {
-        localStorage.setItem(
-          STORAGE_KEYS.MOKJANGS,
-          JSON.stringify(INITIAL_MOKJANG_GROUPS)
-        );
-        return INITIAL_MOKJANG_GROUPS;
+        const settings = this.loadSettings();
+        if (resolvedYear === DEFAULT_FISCAL_YEAR && !settings.isProductionMode) {
+          localStorage.setItem(key, JSON.stringify(INITIAL_MOKJANG_GROUPS));
+          return INITIAL_MOKJANG_GROUPS;
+        }
+        return [];
       }
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : INITIAL_MOKJANG_GROUPS;
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return INITIAL_MOKJANG_GROUPS;
+      return [];
     }
   },
 
-  saveMokjangs(mokjangs: MokjangGroup[]): void {
+  saveMokjangs(
+    mokjangs: MokjangGroup[],
+    fiscalYear?: number
+  ): void {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     try {
-      localStorage.setItem(STORAGE_KEYS.MOKJANGS, JSON.stringify(mokjangs));
+      localStorage.setItem(
+        fyStorageKey('mokjangs', resolvedYear),
+        JSON.stringify(mokjangs)
+      );
+      this.registerFiscalYear(resolvedYear);
     } catch (e) {
       console.error('LocalStorage 목장 저장 실패:', e);
     }
   },
 
   loadSettings(): AppSettings {
+    ensureLegacyMigratedToFiscalYear();
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (!raw) {
@@ -690,13 +1158,19 @@ export const SyncManager = {
         );
         return DEFAULT_SETTINGS;
       }
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        fiscalYearWorkspaces: parsed.fiscalYearWorkspaces || {},
+      };
     } catch {
       return DEFAULT_SETTINGS;
     }
   },
 
   saveSettings(settings: AppSettings): void {
+    ensureLegacyMigratedToFiscalYear();
     try {
       localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
     } catch (e) {
@@ -708,9 +1182,15 @@ export const SyncManager = {
     return sanitizeReceiptLayoutEntry(raw);
   },
 
-  loadReceiptLayouts(): ReceiptBookLayoutsMap {
+  loadReceiptLayouts(
+    fiscalYear?: number
+  ): ReceiptBookLayoutsMap {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.RECEIPT_LAYOUTS);
+      const raw = localStorage.getItem(
+        fyStorageKey('receipt_layouts', resolvedYear)
+      );
       if (!raw) return {};
       return sanitizeReceiptLayoutsMap(JSON.parse(raw));
     } catch {
@@ -718,13 +1198,19 @@ export const SyncManager = {
     }
   },
 
-  saveReceiptLayouts(layouts: ReceiptBookLayoutsMap): boolean {
+  saveReceiptLayouts(
+    layouts: ReceiptBookLayoutsMap,
+    fiscalYear?: number
+  ): boolean {
+    ensureLegacyMigratedToFiscalYear();
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     try {
       const sanitized = sanitizeReceiptLayoutsMap(layouts);
       localStorage.setItem(
-        STORAGE_KEYS.RECEIPT_LAYOUTS,
+        fyStorageKey('receipt_layouts', resolvedYear),
         JSON.stringify(sanitized)
       );
+      this.registerFiscalYear(resolvedYear);
       return true;
     } catch (e) {
       console.error('LocalStorage 영수증철 배치 저장 실패:', e);
@@ -732,41 +1218,164 @@ export const SyncManager = {
     }
   },
 
-  resetToSampleData(): {
+  /**
+   * 새 회계연도(1월~12월) 워크스페이스를 생성합니다.
+   * - 직전 회기 계정별 기말 잔액을 YYYY-01-01 '전월이월(연초 이월금)'으로 자동 이월
+   * - 목장 편성 및 연간 예산안 구조 선택 승계
+   * - 기존 회계연도 데이터는 일절 변경하지 않고 격리 보존
+   */
+  createFiscalYearWorkspace(args: {
+    targetYear: number;
+    carryoverByAccount: { general: number; retreat: number; mission: number };
+    copyMokjangsFrom?: MokjangGroup[];
+    copyAnnualBudgetFrom?: BudgetDocument;
+    settings: AppSettings;
+  }): {
+    transactions: Transaction[];
+    budgets: BudgetsMap;
+    mokjangs: MokjangGroup[];
+    receiptLayouts: ReceiptBookLayoutsMap;
+  } {
+    const {
+      targetYear,
+      carryoverByAccount,
+      copyMokjangsFrom,
+      copyAnnualBudgetFrom,
+      settings,
+    } = args;
+    const nowIso = new Date().toISOString();
+    const startDate = `${targetYear}-01-01`;
+
+    const accountSeeds: Array<{
+      account: 'general' | 'retreat' | 'mission';
+      label: string;
+      amount: number;
+    }> = [
+      {
+        account: 'general',
+        label: '일반회계 전기이월',
+        amount: Math.max(0, Math.round(carryoverByAccount.general || 0)),
+      },
+      {
+        account: 'retreat',
+        label: '수련회·행사비 전기이월',
+        amount: Math.max(0, Math.round(carryoverByAccount.retreat || 0)),
+      },
+      {
+        account: 'mission',
+        label: '목적헌금·선교 전기이월',
+        amount: Math.max(0, Math.round(carryoverByAccount.mission || 0)),
+      },
+    ];
+
+    const transactions: Transaction[] = accountSeeds
+      .filter((seed) => seed.amount > 0)
+      .map((seed, idx) => ({
+        id: `tx-carryover-${targetYear}-${seed.account}-${Date.now() + idx}`,
+        date: startDate,
+        type: 'income',
+        account: seed.account,
+        category: '전월이월',
+        subCategory: '연초 이월금',
+        title: `${targetYear - 1}년 기말잔액 이월 (${seed.label})`,
+        memo: `${targetYear - 1}회기 마감 잔액 자동 승계`,
+        amount: seed.amount,
+        paymentMethod: '계좌이체',
+        createdAt: nowIso,
+      }));
+
+    const bankDefaults = copyAnnualBudgetFrom
+      ? {
+          bankName: copyAnnualBudgetFrom.bankName,
+          accountNumber: copyAnnualBudgetFrom.accountNumber,
+          accountHolder: copyAnnualBudgetFrom.accountHolder,
+        }
+      : undefined;
+
+    const baseAnnual = createBlankAnnualBudgetDocument(
+      targetYear,
+      settings.departmentName,
+      settings.authorName,
+      settings.authorRole,
+      bankDefaults
+    );
+
+    const annualBudget: BudgetDocument = copyAnnualBudgetFrom
+      ? {
+          ...baseAnnual,
+          items: copyAnnualBudgetFrom.items.map((item, idx) => ({
+            ...item,
+            id: `ab-${targetYear}-${idx + 1}-${Math.random().toString(36).slice(2, 5)}`,
+          })),
+        }
+      : baseAnnual;
+
+    const initialClaim = createBlankClaimDocument(
+      targetYear,
+      settings.departmentName,
+      settings.authorName,
+      settings.authorRole,
+      {
+        id: 'claim-1',
+        requestDate: startDate,
+        ...bankDefaults,
+      }
+    );
+
+    const budgets: BudgetsMap = {
+      annual_budget: annualBudget,
+      retreat_claim: initialClaim,
+      claims: [initialClaim],
+    };
+
+    const mokjangs: MokjangGroup[] = copyMokjangsFrom
+      ? copyMokjangsFrom.map((m) => ({ ...m }))
+      : [];
+
+    const receiptLayouts: ReceiptBookLayoutsMap = {};
+
+    this.saveTransactions(transactions, targetYear);
+    this.saveBudgets(budgets, targetYear);
+    this.saveMokjangs(mokjangs, targetYear);
+    this.saveReceiptLayouts(receiptLayouts, targetYear);
+    this.saveActiveFiscalYear(targetYear);
+
+    return {
+      transactions,
+      budgets,
+      mokjangs,
+      receiptLayouts,
+    };
+  },
+
+  resetToSampleData(fiscalYear?: number): {
     transactions: Transaction[];
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
     receiptLayouts: ReceiptBookLayoutsMap;
   } {
+    const resolvedYear = fiscalYear ?? this.loadActiveFiscalYear();
     const nextSettings: AppSettings = {
       ...this.loadSettings(),
       isProductionMode: false,
     };
     const { budgets } = syncBudgetsWithDepartment(
       {
-        retreat_claim: INITIAL_RETREAT_BUDGET,
-        annual_budget: INITIAL_ANNUAL_BUDGET,
+        retreat_claim: { ...INITIAL_RETREAT_BUDGET, fiscalYear: resolvedYear },
+        annual_budget: { ...INITIAL_ANNUAL_BUDGET, fiscalYear: resolvedYear },
+        claims: [{ ...INITIAL_RETREAT_BUDGET, id: 'claim-1', fiscalYear: resolvedYear }],
       },
       nextSettings.departmentName,
       undefined,
       nextSettings.authorName
     );
     const emptyLayouts: ReceiptBookLayoutsMap = {};
-    localStorage.setItem(
-      STORAGE_KEYS.TRANSACTIONS,
-      JSON.stringify(INITIAL_TRANSACTIONS)
-    );
-    localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(budgets));
-    localStorage.setItem(
-      STORAGE_KEYS.MOKJANGS,
-      JSON.stringify(INITIAL_MOKJANG_GROUPS)
-    );
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
-    localStorage.setItem(
-      STORAGE_KEYS.RECEIPT_LAYOUTS,
-      JSON.stringify(emptyLayouts)
-    );
+    this.saveTransactions(INITIAL_TRANSACTIONS, resolvedYear);
+    this.saveBudgets(budgets, resolvedYear);
+    this.saveMokjangs(INITIAL_MOKJANG_GROUPS, resolvedYear);
+    this.saveSettings(nextSettings);
+    this.saveReceiptLayouts(emptyLayouts, resolvedYear);
     return {
       transactions: INITIAL_TRANSACTIONS,
       budgets,
@@ -777,13 +1386,14 @@ export const SyncManager = {
   },
 
   /**
-   * 모든 탭의 데이터(장부 거래·영수증 + 목장 현황 + 연간 예산안 + 수련회 청구서 + 커스텀 분류 + 영수증철 배치)를
-   * 일괄 초기화하여 깨끗한 실사용 상태로 전환합니다.
+   * 현재 선택된 회계연도의 모든 탭 데이터(장부·영수증·목장·연간예산안·청구서·커스텀 분류·영수증철 배치)를
+   * 일괄 초기화하여 깨끗한 실사용 상태로 전환합니다. (타 회계연도 데이터는 보존)
    */
   resetAllDataClean(
     yearMonth: string,
     initialCarryoverAmount = 0,
-    keepConnections = true
+    keepConnections = true,
+    fiscalYear?: number
   ): {
     transactions: Transaction[];
     budgets: BudgetsMap;
@@ -791,8 +1401,11 @@ export const SyncManager = {
     settings: AppSettings;
     receiptLayouts: ReceiptBookLayoutsMap;
   } {
+    const resolvedYear =
+      fiscalYear ??
+      (Number(yearMonth.slice(0, 4)) || this.loadActiveFiscalYear());
     const prevSettings = this.loadSettings();
-    const prevBudgets = this.loadBudgets();
+    const prevBudgets = this.loadBudgets(resolvedYear);
 
     const cleanTransactions: Transaction[] =
       initialCarryoverAmount > 0
@@ -829,73 +1442,60 @@ export const SyncManager = {
 
     const deptName = nextSettings.departmentName || '청년부';
     const authorName = nextSettings.authorName || '';
-    const fiscalYear = Number(yearMonth.slice(0, 4)) || new Date().getFullYear();
+    const authorRole = nextSettings.authorRole || '청년부 회계';
+
+    const annualBank = keepConnections
+      ? {
+          bankName: prevBudgets.annual_budget.bankName,
+          accountNumber: prevBudgets.annual_budget.accountNumber,
+          accountHolder: prevBudgets.annual_budget.accountHolder,
+        }
+      : undefined;
+    const claimBank = keepConnections
+      ? {
+          bankName: prevBudgets.retreat_claim.bankName,
+          accountNumber: prevBudgets.retreat_claim.accountNumber,
+          accountHolder: prevBudgets.retreat_claim.accountHolder,
+        }
+      : undefined;
+
+    const cleanAnnual = {
+      ...createBlankAnnualBudgetDocument(
+        resolvedYear,
+        deptName,
+        authorName,
+        authorRole,
+        annualBank
+      ),
+      requestDate: `${yearMonth}-01`,
+    };
+    const cleanClaim = createBlankClaimDocument(
+      resolvedYear,
+      deptName,
+      authorName,
+      authorRole,
+      {
+        id: 'claim-1',
+        title: `${resolvedYear}년 ${deptName} 수련회·행사 재정 청구서`,
+        requestDate: `${yearMonth}-01`,
+        ...claimBank,
+      }
+    );
 
     const cleanBudgets: BudgetsMap = {
-      annual_budget: {
-        ...prevBudgets.annual_budget,
-        templateType: 'annual_budget',
-        fiscalYear,
-        title: `${fiscalYear}년도 ${deptName} 연간 예산 심의안`,
-        subtitle: '',
-        department: deptName,
-        eventName: `${fiscalYear}년 연간 사역 예산`,
-        eventPeriod: `${fiscalYear}년 1월 1일 ~ ${fiscalYear}년 12월 31일`,
-        eventLocation: '',
-        participants: '',
-        proposerName: authorName,
-        requestDate: `${yearMonth}-01`,
-        selfBurdenAmount: 0,
-        selfBurdenNote: '',
-        bankName: keepConnections ? prevBudgets.annual_budget.bankName : '',
-        accountNumber: keepConnections
-          ? prevBudgets.annual_budget.accountNumber
-          : '',
-        accountHolder: keepConnections
-          ? prevBudgets.annual_budget.accountHolder
-          : '',
-        items: [],
-      },
-      retreat_claim: {
-        ...prevBudgets.retreat_claim,
-        templateType: 'retreat_claim',
-        fiscalYear,
-        title: `${fiscalYear}년 ${deptName} 수련회·행사 재정 청구서`,
-        subtitle: '',
-        department: deptName,
-        eventName: '',
-        eventPeriod: '',
-        eventLocation: '',
-        participants: '',
-        proposerName: authorName,
-        requestDate: `${yearMonth}-01`,
-        selfBurdenAmount: 0,
-        selfBurdenNote: '',
-        bankName: keepConnections ? prevBudgets.retreat_claim.bankName : '',
-        accountNumber: keepConnections
-          ? prevBudgets.retreat_claim.accountNumber
-          : '',
-        accountHolder: keepConnections
-          ? prevBudgets.retreat_claim.accountHolder
-          : '',
-        items: [],
-      },
+      annual_budget: cleanAnnual,
+      retreat_claim: cleanClaim,
+      claims: [cleanClaim],
     };
 
     const cleanMokjangs: MokjangGroup[] = [];
     const emptyLayouts: ReceiptBookLayoutsMap = {};
 
-    localStorage.setItem(
-      STORAGE_KEYS.TRANSACTIONS,
-      JSON.stringify(cleanTransactions)
-    );
-    localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(cleanBudgets));
-    localStorage.setItem(STORAGE_KEYS.MOKJANGS, JSON.stringify(cleanMokjangs));
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(nextSettings));
-    localStorage.setItem(
-      STORAGE_KEYS.RECEIPT_LAYOUTS,
-      JSON.stringify(emptyLayouts)
-    );
+    this.saveTransactions(cleanTransactions, resolvedYear);
+    this.saveBudgets(cleanBudgets, resolvedYear);
+    this.saveMokjangs(cleanMokjangs, resolvedYear);
+    this.saveSettings(nextSettings);
+    this.saveReceiptLayouts(emptyLayouts, resolvedYear);
 
     return {
       transactions: cleanTransactions,
@@ -908,7 +1508,8 @@ export const SyncManager = {
 
   startCleanProductionLedger(
     yearMonth: string,
-    initialCarryoverAmount = 0
+    initialCarryoverAmount = 0,
+    fiscalYear?: number
   ): {
     transactions: Transaction[];
     budgets: BudgetsMap;
@@ -916,7 +1517,15 @@ export const SyncManager = {
     settings: AppSettings;
     receiptLayouts: ReceiptBookLayoutsMap;
   } {
-    return this.resetAllDataClean(yearMonth, initialCarryoverAmount, true);
+    const resolvedYear =
+      fiscalYear ??
+      (Number(yearMonth.slice(0, 4)) || this.loadActiveFiscalYear());
+    return this.resetAllDataClean(
+      yearMonth,
+      initialCarryoverAmount,
+      true,
+      resolvedYear
+    );
   },
 
   async pushTransactionToGas(
@@ -1080,30 +1689,40 @@ export const SyncManager = {
   },
 
   exportBackupJson(data: {
+    fiscalYear?: number;
     transactions: Transaction[];
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
     settings: AppSettings;
     receiptLayouts?: ReceiptBookLayoutsMap;
   }): void {
+    const fiscalYear = data.fiscalYear || this.loadActiveFiscalYear();
+    const normalizedBudgets = normalizeBudgetsMap(data.budgets, fiscalYear);
     const safeSettings: AppSettings = {
       ...data.settings,
       geminiApiKey: '', // 개인 API 키는 백업 파일 유출 방지를 위해 제외
     };
     const sanitizedLayouts = sanitizeReceiptLayoutsMap(data.receiptLayouts);
+    const claimItemTotal = normalizedBudgets.claims.reduce(
+      (sum, doc) => sum + doc.items.length,
+      0
+    );
     const jsonStr = JSON.stringify(
       {
         version: BACKUP_SCHEMA_VERSION,
+        fiscalYear,
         exportedAt: new Date().toISOString(),
         summary: {
+          fiscalYear,
           transactionCount: data.transactions.length,
           mokjangCount: data.mokjangs.length,
-          annualBudgetItemCount: data.budgets.annual_budget.items.length,
-          retreatBudgetItemCount: data.budgets.retreat_claim.items.length,
+          annualBudgetItemCount: normalizedBudgets.annual_budget.items.length,
+          claimDocumentCount: normalizedBudgets.claims.length,
+          retreatBudgetItemCount: claimItemTotal,
           receiptLayoutScopeCount: Object.keys(sanitizedLayouts).length,
         },
         transactions: data.transactions,
-        budgets: data.budgets,
+        budgets: normalizedBudgets,
         mokjangs: data.mokjangs,
         settings: safeSettings,
         receiptLayouts: sanitizedLayouts,
@@ -1118,7 +1737,7 @@ export const SyncManager = {
     const link = document.createElement('a');
     link.href = url;
     const dateTag = new Date().toISOString().slice(0, 10);
-    link.download = `청년부_회계_전체백업_${dateTag}.json`;
+    link.download = `청년부_회계_${fiscalYear}년_전체백업_${dateTag}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1128,6 +1747,7 @@ export const SyncManager = {
   parseAndValidateBackupJson(rawText: string):
     | {
         ok: true;
+        fiscalYear?: number;
         transactions: Transaction[];
         budgets: Partial<BudgetsMap>;
         mokjangs: MokjangGroup[] | null;
@@ -1178,8 +1798,13 @@ export const SyncManager = {
           ? sanitizeReceiptLayoutsMap(parsed.receiptLayouts)
           : undefined;
 
+      const parsedFiscalYear = isValidFiscalYear(Number(parsed.fiscalYear))
+        ? Number(parsed.fiscalYear)
+        : undefined;
+
       return {
         ok: true,
+        ...(parsedFiscalYear ? { fiscalYear: parsedFiscalYear } : {}),
         transactions,
         budgets:
           parsed.budgets && typeof parsed.budgets === 'object'

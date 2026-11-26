@@ -4,7 +4,6 @@ import {
   AppSettings,
   BudgetDocument,
   BudgetLineItem,
-  BudgetTemplateType,
   MokjangExpenseSubType,
   MokjangGroup,
   PaymentMethod,
@@ -15,13 +14,14 @@ import {
   Transaction,
   TransactionType,
 } from '../types/finance';
-import {
-  DEFAULT_SETTINGS,
-  INITIAL_ANNUAL_BUDGET,
-  INITIAL_RETREAT_BUDGET,
-} from './sampleData';
+import { DEFAULT_SETTINGS } from './sampleData';
 import {
   BudgetsMap,
+  createBlankAnnualBudgetDocument,
+  createBlankClaimDocument,
+  DEFAULT_FISCAL_YEAR,
+  isValidFiscalYear,
+  normalizeBudgetsMap,
   sanitizeReceiptEditConfig,
   sanitizeReceiptLayoutEntry,
   sanitizeReceiptLayoutsMap,
@@ -46,7 +46,9 @@ const RECEIPT_FOLDER_NAME = '영수증_증빙';
 const DEFAULT_SPREADSHEET_TITLE = '청년부 회계장부 (통합백업)';
 const DRIVE_THUMBNAIL_WIDTH_PX = 2000;
 const RECEIPT_LAYOUT_SETTING_PREFIX = 'receiptLayout:';
+const CLAIM_DOC_KEY_PREFIX = 'retreat_claim:';
 const SILENT_RECONNECT_TIMEOUT_MS = 3500;
+const FISCAL_YEAR_FOLDER_REGEX = /^(\d{4})년$/;
 
 const SHEET_NAMES = {
   LEDGER: '장부내역',
@@ -65,13 +67,17 @@ export interface GoogleSession {
 }
 
 export interface GoogleWorkspaceInfo {
+  fiscalYear: number;
   rootFolderId: string;
+  yearFolderId: string;
+  yearFolderUrl: string;
   receiptFolderId: string;
   receiptFolderUrl: string;
   spreadsheetId: string;
   spreadsheetUrl: string;
   createdNewSpreadsheet: boolean;
   hasExistingData: boolean;
+  migratedFromLegacyRoot?: boolean;
   remoteModifiedTime?: string;
 }
 
@@ -351,6 +357,101 @@ async function googleApiFetch(
   return res;
 }
 
+async function findDriveFolderOnly(
+  accessToken: string,
+  folderName: string,
+  parentId?: string
+): Promise<{ id: string; webViewLink: string } | null> {
+  const escapedName = folderName.replace(/'/g, "\\'");
+  const parentClause = parentId ? ` and '${parentId}' in parents` : '';
+  const q = `mimeType='application/vnd.google-apps.folder' and name='${escapedName}' and trashed=false${parentClause}`;
+
+  const searchRes = await googleApiFetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+      q
+    )}&fields=files(id,name,webViewLink)&spaces=drive`,
+    accessToken
+  );
+  if (!searchRes.ok) return null;
+  const searchData = await searchRes.json();
+  if (Array.isArray(searchData.files) && searchData.files.length > 0) {
+    const f = searchData.files[0];
+    return {
+      id: f.id,
+      webViewLink:
+        f.webViewLink || `https://drive.google.com/drive/folders/${f.id}`,
+    };
+  }
+  return null;
+}
+
+async function moveDriveFileToFolder(
+  accessToken: string,
+  fileId: string,
+  targetParentId: string,
+  removeParentId?: string
+): Promise<boolean> {
+  const removeClause = removeParentId
+    ? `&removeParents=${encodeURIComponent(removeParentId)}`
+    : '';
+  try {
+    const res = await googleApiFetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+        fileId
+      )}?addParents=${encodeURIComponent(targetParentId)}${removeClause}&fields=id,parents`,
+      accessToken,
+      { method: 'PATCH' }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 구글 드라이브의 청년부_회계_통합관리 폴더에서 생성되어 있는 회계연도(YYYY년) 목록을 조회합니다.
+ */
+export async function listDriveFiscalYears(
+  accessToken: string
+): Promise<number[]> {
+  try {
+    const rootFolder = await findDriveFolderOnly(accessToken, ROOT_FOLDER_NAME);
+    if (!rootFolder) return [];
+
+    const q = `'${rootFolder.id}' in parents and trashed=false`;
+    const res = await googleApiFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        q
+      )}&fields=files(id,name,mimeType)&pageSize=100`,
+      accessToken
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const years = new Set<number>();
+    let hasLegacyRootSheet = false;
+
+    for (const f of data.files || []) {
+      if (f.mimeType === 'application/vnd.google-apps.folder' && f.name) {
+        const match = String(f.name).trim().match(FISCAL_YEAR_FOLDER_REGEX);
+        if (match?.[1]) {
+          const y = Number(match[1]);
+          if (isValidFiscalYear(y)) years.add(y);
+        }
+      } else if (f.mimeType === 'application/vnd.google-apps.spreadsheet') {
+        hasLegacyRootSheet = true;
+      }
+    }
+
+    if (hasLegacyRootSheet && years.size === 0) {
+      years.add(DEFAULT_FISCAL_YEAR);
+    }
+
+    return Array.from(years).sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+
 async function findOrCreateDriveFolder(
   accessToken: string,
   folderName: string,
@@ -457,20 +558,26 @@ async function ensureAllSheetTabs(
 }
 
 /**
- * 로그인한 구글 계정의 드라이브에 통합 관리 폴더·영수증 폴더·5개 시트 스프레드시트를 자동 준비합니다.
+ * 로그인한 구글 계정의 드라이브에 회계연도별 독립 폴더(청년부_회계_통합관리/YYYY년/)와
+ * 연도 전용 5개 시트 스프레드시트·영수증 폴더를 자동 준비합니다.
+ * 기존 루트에 저장된 레거시 시트·영수증 폴더가 있으면 파일 ID 변경 없이 연도 폴더로 무손실 이관합니다.
  */
 export async function ensureGoogleWorkspace(
   accessToken: string,
   departmentName: string,
+  fiscalYear = DEFAULT_FISCAL_YEAR,
   existingSpreadsheetId?: string
 ): Promise<GoogleWorkspaceInfo> {
+  const safeYear = isValidFiscalYear(fiscalYear)
+    ? fiscalYear
+    : DEFAULT_FISCAL_YEAR;
   const rootFolder = await findOrCreateDriveFolder(
     accessToken,
     ROOT_FOLDER_NAME
   );
-  const receiptFolder = await findOrCreateDriveFolder(
+  const yearFolder = await findOrCreateDriveFolder(
     accessToken,
-    RECEIPT_FOLDER_NAME,
+    `${safeYear}년`,
     rootFolder.id
   );
 
@@ -478,30 +585,50 @@ export async function ensureGoogleWorkspace(
   let spreadsheetUrl = '';
   let remoteModifiedTime: string | undefined;
   let createdNewSpreadsheet = false;
+  let migratedFromLegacyRoot = false;
 
-  // 1) 기존에 저장된 spreadsheetId 유효성 확인
+  // 1) 전달받은 기존 spreadsheetId가 유효하며 해당 연도 폴더(또는 루트 레거시)에 있는지 확인
   if (existingSpreadsheetId?.trim()) {
     const checkRes = await googleApiFetch(
-      `https://www.googleapis.com/drive/v3/files/${existingSpreadsheetId.trim()}?fields=id,trashed,webViewLink,modifiedTime`,
+      `https://www.googleapis.com/drive/v3/files/${existingSpreadsheetId.trim()}?fields=id,trashed,webViewLink,modifiedTime,parents`,
       accessToken
     );
     if (checkRes.ok) {
       const info = await checkRes.json();
+      const parents: string[] = Array.isArray(info.parents) ? info.parents : [];
       if (info.id && !info.trashed) {
-        spreadsheetId = info.id;
-        spreadsheetUrl =
-          info.webViewLink ||
-          `https://docs.google.com/spreadsheets/d/${info.id}/edit`;
-        if (typeof info.modifiedTime === 'string' && info.modifiedTime) {
-          remoteModifiedTime = info.modifiedTime;
+        if (parents.includes(yearFolder.id)) {
+          spreadsheetId = info.id;
+          spreadsheetUrl =
+            info.webViewLink ||
+            `https://docs.google.com/spreadsheets/d/${info.id}/edit`;
+          if (typeof info.modifiedTime === 'string' && info.modifiedTime) {
+            remoteModifiedTime = info.modifiedTime;
+          }
+        } else if (parents.includes(rootFolder.id)) {
+          // 기존 루트에 있던 시트를 연도 폴더로 무손실 이동 (spreadsheetId 100% 유지)
+          await moveDriveFileToFolder(
+            accessToken,
+            info.id,
+            yearFolder.id,
+            rootFolder.id
+          );
+          migratedFromLegacyRoot = true;
+          spreadsheetId = info.id;
+          spreadsheetUrl =
+            info.webViewLink ||
+            `https://docs.google.com/spreadsheets/d/${info.id}/edit`;
+          if (typeof info.modifiedTime === 'string' && info.modifiedTime) {
+            remoteModifiedTime = info.modifiedTime;
+          }
         }
       }
     }
   }
 
-  // 2) 루트 폴더 안에서 이 앱이 만든 기존 스프레드시트 검색
+  // 2) 해당 연도 폴더 안에서 기존 스프레드시트 검색
   if (!spreadsheetId) {
-    const q = `mimeType='application/vnd.google-apps.spreadsheet' and '${rootFolder.id}' in parents and trashed=false`;
+    const q = `mimeType='application/vnd.google-apps.spreadsheet' and '${yearFolder.id}' in parents and trashed=false`;
     const listRes = await googleApiFetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
         q
@@ -523,11 +650,72 @@ export async function ensureGoogleWorkspace(
     }
   }
 
-  // 3) 없으면 새 스프레드시트를 5개 시트 구성으로 자동 생성하고 루트 폴더로 이동
+  // 3) 연도 폴더가 비어 있을 때, 기본 연도(2026)라면 루트에 남아 있는 레거시 통합 시트를 무손실 이관
+  if (!spreadsheetId && safeYear === DEFAULT_FISCAL_YEAR) {
+    const legacyQ = `mimeType='application/vnd.google-apps.spreadsheet' and '${rootFolder.id}' in parents and trashed=false`;
+    const legacyListRes = await googleApiFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        legacyQ
+      )}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc`,
+      accessToken
+    );
+    if (legacyListRes.ok) {
+      const legacyData = await legacyListRes.json();
+      if (Array.isArray(legacyData.files) && legacyData.files.length > 0) {
+        const f = legacyData.files[0];
+        await moveDriveFileToFolder(
+          accessToken,
+          f.id,
+          yearFolder.id,
+          rootFolder.id
+        );
+        migratedFromLegacyRoot = true;
+        spreadsheetId = f.id;
+        spreadsheetUrl =
+          f.webViewLink ||
+          `https://docs.google.com/spreadsheets/d/${f.id}/edit`;
+        if (typeof f.modifiedTime === 'string' && f.modifiedTime) {
+          remoteModifiedTime = f.modifiedTime;
+        }
+      }
+    }
+  }
+
+  // 4) 연도 폴더 안 영수증_증빙 폴더 준비 (루트에 레거시 영수증 폴더가 있으면 파일 ID 유지한 채 통째 이동)
+  let receiptFolder = await findDriveFolderOnly(
+    accessToken,
+    RECEIPT_FOLDER_NAME,
+    yearFolder.id
+  );
+  if (!receiptFolder && (migratedFromLegacyRoot || safeYear === DEFAULT_FISCAL_YEAR)) {
+    const legacyReceiptFolder = await findDriveFolderOnly(
+      accessToken,
+      RECEIPT_FOLDER_NAME,
+      rootFolder.id
+    );
+    if (legacyReceiptFolder) {
+      await moveDriveFileToFolder(
+        accessToken,
+        legacyReceiptFolder.id,
+        yearFolder.id,
+        rootFolder.id
+      );
+      receiptFolder = legacyReceiptFolder;
+    }
+  }
+  if (!receiptFolder) {
+    receiptFolder = await findOrCreateDriveFolder(
+      accessToken,
+      RECEIPT_FOLDER_NAME,
+      yearFolder.id
+    );
+  }
+
+  // 5) 없으면 연도 전용 새 스프레드시트를 5개 시트 구성으로 자동 생성하고 연도 폴더로 이동
   if (!spreadsheetId) {
     const title = departmentName?.trim()
-      ? `${departmentName.trim()} 회계장부 (통합백업)`
-      : DEFAULT_SPREADSHEET_TITLE;
+      ? `${safeYear}년 ${departmentName.trim()} 회계장부`
+      : `${safeYear}년 ${DEFAULT_SPREADSHEET_TITLE}`;
 
     const createRes = await googleApiFetch(
       'https://sheets.googleapis.com/v4/spreadsheets',
@@ -561,16 +749,13 @@ export async function ensureGoogleWorkspace(
       `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
     createdNewSpreadsheet = true;
 
-    // 생성된 시트를 청년부_회계_통합관리 폴더로 이동
-    try {
-      await googleApiFetch(
-        `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${rootFolder.id}&removeParents=root&fields=id,parents`,
-        accessToken,
-        { method: 'PATCH' }
-      );
-    } catch {
-      // 이동 실패해도 내 드라이브 루트에서 정상 작동
-    }
+    // 생성된 시트를 청년부_회계_통합관리/YYYY년/ 폴더로 이동
+    await moveDriveFileToFolder(
+      accessToken,
+      spreadsheetId,
+      yearFolder.id,
+      'root'
+    );
 
     // 5개 시트 머리글 행 볼드 + 회색 배경 스타일 적용
     try {
@@ -645,13 +830,17 @@ export async function ensureGoogleWorkspace(
   }
 
   return {
+    fiscalYear: safeYear,
     rootFolderId: rootFolder.id,
+    yearFolderId: yearFolder.id,
+    yearFolderUrl: yearFolder.webViewLink,
     receiptFolderId: receiptFolder.id,
     receiptFolderUrl: receiptFolder.webViewLink,
     spreadsheetId,
     spreadsheetUrl,
     createdNewSpreadsheet,
     hasExistingData,
+    ...(migratedFromLegacyRoot ? { migratedFromLegacyRoot: true } : {}),
     remoteModifiedTime,
   };
 }
@@ -823,6 +1012,7 @@ export async function pushAllToGoogleSheets(
   spreadsheetId: string,
   receiptFolderId: string,
   payload: {
+    fiscalYear?: number;
     transactions: ProcessedTransaction[];
     budgets: BudgetsMap;
     mokjangs: MokjangGroup[];
@@ -933,10 +1123,13 @@ export async function pushAllToGoogleSheets(
     ]),
   ];
 
-  const budgetTemplates: BudgetTemplateType[] = [
-    'annual_budget',
-    'retreat_claim',
-  ];
+  const activeFiscalYear = isValidFiscalYear(payload.fiscalYear)
+    ? payload.fiscalYear
+    : payload.budgets.annual_budget?.fiscalYear || DEFAULT_FISCAL_YEAR;
+  const normalizedBudgets = normalizeBudgetsMap(
+    payload.budgets,
+    activeFiscalYear
+  );
 
   const budgetItemRows: (string | number)[][] = [
     [
@@ -976,12 +1169,23 @@ export async function pushAllToGoogleSheets(
     ],
   ];
 
-  budgetTemplates.forEach((tpl) => {
-    const doc = payload.budgets[tpl];
-    if (!doc) return;
+  const docEntries: Array<{ key: string; doc: BudgetDocument }> = [
+    { key: 'annual_budget', doc: normalizedBudgets.annual_budget },
+    ...normalizedBudgets.claims.map((claimDoc, idx) => {
+      const claimId = claimDoc.id?.trim() || `claim-${idx + 1}`;
+      // 첫 기본 청구서(claim-1)는 구버전 시트 호환을 위해 'retreat_claim', 추가 청구서는 'retreat_claim:<id>' 사용
+      const docKey =
+        claimId === 'claim-1'
+          ? 'retreat_claim'
+          : `${CLAIM_DOC_KEY_PREFIX}${claimId}`;
+      return { key: docKey, doc: claimDoc };
+    }),
+  ];
+
+  docEntries.forEach(({ key, doc }) => {
     budgetMetaRows.push([
-      tpl,
-      Number(doc.fiscalYear) || 2026,
+      key,
+      Number(doc.fiscalYear) || activeFiscalYear,
       doc.title || '',
       doc.subtitle || '',
       doc.department || '',
@@ -1002,7 +1206,7 @@ export async function pushAllToGoogleSheets(
 
     doc.items.forEach((item) => {
       budgetItemRows.push([
-        tpl,
+        key,
         item.id,
         item.entryType || 'expense',
         item.category || '',
@@ -1031,6 +1235,7 @@ export async function pushAllToGoogleSheets(
 
   const settingRows: (string | number)[][] = [
     ['항목', '값', '수정일시'],
+    ['fiscalYear', String(activeFiscalYear), now],
     ['departmentName', safeSettings.departmentName || '', now],
     ['authorName', safeSettings.authorName || '', now],
     ['authorRole', safeSettings.authorRole || '', now],
@@ -1125,7 +1330,8 @@ export async function pushAllToGoogleSheets(
 export async function pullAllFromGoogleSheets(
   accessToken: string,
   spreadsheetId: string,
-  currentSettings: AppSettings
+  currentSettings: AppSettings,
+  fiscalYear = DEFAULT_FISCAL_YEAR
 ): Promise<{
   transactions: Transaction[];
   mokjangs: MokjangGroup[];
@@ -1240,32 +1446,64 @@ export async function pullAllFromGoogleSheets(
     });
   }
 
-  // 3) 예산안 문서정보 + 항목 파싱
+  // 3) 예산안 문서정보 + 복수 특별예산 청구서 항목 파싱
   const itemValues: string[][] = valueRanges[2]?.values || [];
   const metaValues: string[][] = valueRanges[3]?.values || [];
+  const safeYear = isValidFiscalYear(fiscalYear)
+    ? fiscalYear
+    : DEFAULT_FISCAL_YEAR;
 
-  const annualDoc: BudgetDocument = {
-    ...INITIAL_ANNUAL_BUDGET,
-    items: [],
-  };
-  const retreatDoc: BudgetDocument = {
-    ...INITIAL_RETREAT_BUDGET,
-    items: [],
+  const annualDoc: BudgetDocument = createBlankAnnualBudgetDocument(
+    safeYear,
+    currentSettings.departmentName,
+    currentSettings.authorName,
+    currentSettings.authorRole
+  );
+  const claimMap = new Map<string, BudgetDocument>();
+
+  const getOrCreateClaimDoc = (rawKey: string): BudgetDocument | null => {
+    if (rawKey === 'retreat_claim') {
+      let existing = claimMap.get('claim-1');
+      if (!existing) {
+        existing = createBlankClaimDocument(
+          safeYear,
+          currentSettings.departmentName,
+          currentSettings.authorName,
+          currentSettings.authorRole,
+          { id: 'claim-1' }
+        );
+        claimMap.set('claim-1', existing);
+      }
+      return existing;
+    }
+    if (rawKey.startsWith(CLAIM_DOC_KEY_PREFIX)) {
+      const claimId = rawKey.slice(CLAIM_DOC_KEY_PREFIX.length).trim();
+      if (!claimId) return null;
+      let existing = claimMap.get(claimId);
+      if (!existing) {
+        existing = createBlankClaimDocument(
+          safeYear,
+          currentSettings.departmentName,
+          currentSettings.authorName,
+          currentSettings.authorRole,
+          { id: claimId }
+        );
+        claimMap.set(claimId, existing);
+      }
+      return existing;
+    }
+    return null;
   };
 
   for (let i = 1; i < metaValues.length; i++) {
     const r = metaValues[i];
     if (!r || !r[0]) continue;
-    const tpl = String(r[0]) as BudgetTemplateType;
+    const rawKey = String(r[0]).trim();
     const target =
-      tpl === 'annual_budget'
-        ? annualDoc
-        : tpl === 'retreat_claim'
-          ? retreatDoc
-          : null;
+      rawKey === 'annual_budget' ? annualDoc : getOrCreateClaimDoc(rawKey);
     if (!target) continue;
 
-    target.fiscalYear = Number(r[1]) || 2026;
+    target.fiscalYear = Number(r[1]) || safeYear;
     target.title = String(r[2] || target.title);
     target.subtitle = String(r[3] || '');
     target.department = String(r[4] || '');
@@ -1287,7 +1525,7 @@ export async function pullAllFromGoogleSheets(
   for (let i = 1; i < itemValues.length; i++) {
     const r = itemValues[i];
     if (!r || !r[0]) continue;
-    const tpl = String(r[0]) as BudgetTemplateType;
+    const rawKey = String(r[0]).trim();
     const item: BudgetLineItem = {
       id: String(r[1] || `bg-${Date.now()}-${i}`),
       entryType: String(r[2]) === 'income' ? 'income' : 'expense',
@@ -1299,12 +1537,33 @@ export async function pullAllFromGoogleSheets(
       amount: Number(r[7]) || 0,
       note: String(r[8] || ''),
     };
-    if (tpl === 'annual_budget') {
+    if (rawKey === 'annual_budget') {
       annualDoc.items.push(item);
-    } else if (tpl === 'retreat_claim') {
-      retreatDoc.items.push(item);
+    } else {
+      const claimTarget = getOrCreateClaimDoc(rawKey);
+      if (claimTarget) {
+        claimTarget.items.push(item);
+      }
     }
   }
+
+  const parsedClaims = Array.from(claimMap.values());
+  const defaultFallbackClaim = createBlankClaimDocument(
+    safeYear,
+    currentSettings.departmentName,
+    currentSettings.authorName,
+    currentSettings.authorRole,
+    { id: 'claim-1' }
+  );
+  const resolvedBudgets = normalizeBudgetsMap(
+    {
+      annual_budget: annualDoc,
+      claims: parsedClaims.length > 0 ? parsedClaims : [defaultFallbackClaim],
+    },
+    safeYear,
+    annualDoc,
+    defaultFallbackClaim
+  );
 
   // 4) 설정 파싱 (로컬 전용 API 키·클라이언트 ID·시트 ID는 유지)
   const settingValues: string[][] = valueRanges[4]?.values || [];
@@ -1360,10 +1619,7 @@ export async function pullAllFromGoogleSheets(
   return {
     transactions,
     mokjangs,
-    budgets: {
-      annual_budget: annualDoc,
-      retreat_claim: retreatDoc,
-    },
+    budgets: resolvedBudgets,
     settings: {
       ...nextSettings,
       lastSyncedAt: new Date().toISOString(),

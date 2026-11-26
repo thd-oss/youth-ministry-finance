@@ -50,12 +50,17 @@ interface DataSummaryInfo {
   mokjangCount: number;
   annualBudgetCount: number;
   retreatBudgetCount: number;
+  claimDocumentCount?: number;
 }
 
 interface SyncSettingsModalProps {
   open: boolean;
   onClose: () => void;
   initialTab?: SettingsTabType;
+  activeFiscalYear?: number;
+  availableFiscalYears?: number[];
+  onSwitchFiscalYear?: (year: number) => void;
+  onOpenNewFiscalYear?: () => void;
   settings: AppSettings;
   googleSession: GoogleSession | null;
   onSaveSettings: (next: AppSettings) => void;
@@ -107,6 +112,10 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
   open,
   onClose,
   initialTab = 'connection',
+  activeFiscalYear = 2026,
+  availableFiscalYears = [2026],
+  onSwitchFiscalYear,
+  onOpenNewFiscalYear,
   settings,
   googleSession,
   onSaveSettings,
@@ -594,7 +603,7 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     구글 시트 원클릭 통합 백업
                   </div>
                   <p className="text-[12px] text-[#4E5968] mt-0.5 break-words [word-break:keep-all]">
-                    구글 계정 로그인 한 번으로 드라이브에 전용 시트(장부·목장·예산안·청구서·설정)와 영수증 폴더를 자동 생성하고 관리합니다.
+                    회계연도(1월~12월)별 폴더(청년부_회계_통합관리/{activeFiscalYear}년)로 시트와 영수증을 자동 분리 관리합니다.
                   </p>
                 </div>
                 {hasLinkedSheet && (
@@ -608,6 +617,47 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
                     {googleSession ? '연결됨' : '재로그인 필요'}
                   </span>
                 )}
+              </div>
+
+              {/* 회계연도(회기) 전환 & 새 회기 시작 바 */}
+              <div className="bg-[#FFFFFF] rounded-2xl p-3 sm:p-3.5 border border-[#E5E8EB] space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] font-bold text-[#4E5968]">
+                    현재 회계연도 ({activeFiscalYear}년)
+                  </span>
+                  {onOpenNewFiscalYear && (
+                    <button
+                      type="button"
+                      onClick={onOpenNewFiscalYear}
+                      className="h-7 px-2.5 rounded-lg bg-[#E8F3FF] text-[#1B64DA] text-[11.5px] font-bold whitespace-nowrap active:scale-[0.97]"
+                    >
+                      + 새 회기 시작
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {availableFiscalYears.map((fy) => {
+                    const isActive = fy === activeFiscalYear;
+                    return (
+                      <button
+                        key={fy}
+                        type="button"
+                        onClick={() => {
+                          if (!isActive && onSwitchFiscalYear) {
+                            onSwitchFiscalYear(fy);
+                          }
+                        }}
+                        className={`h-8 px-3 rounded-xl text-[12px] font-bold tabular-nums whitespace-nowrap transition-all active:scale-[0.97] ${
+                          isActive
+                            ? 'bg-[#191F28] text-[#FFFFFF]'
+                            : 'bg-[#F2F4F6] text-[#4E5968] hover:bg-[#E5E8EB]'
+                        }`}
+                      >
+                        {fy}년
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* 연결된 계정 & 시트/폴더 바로 열기 카드 */}
@@ -1305,13 +1355,13 @@ export const SyncSettingsModal: React.FC<SyncSettingsModalProps> = ({
             {/* 전체 데이터 일괄 초기화 */}
             <div className="bg-[#FFEEF0]/70 rounded-2xl p-4 space-y-3 border border-[#F04452]/20">
               <div>
-                <div className="text-[14px] font-bold text-[#F04452] flex items-center gap-1.5">
-                  <Rocket className="w-4 h-4 shrink-0" />
-                  <span>전체 데이터 일괄 초기화 (모든 탭 비우기)</span>
-                </div>
-                <div className="text-[12px] text-[#4E5968] mt-0.5 break-words [word-break:keep-all]">
-                  장부 거래·영수증, 목장 목록, 연간 예산안, 수련회 청구서 항목을 한 번에 모두 비웁니다.
-                </div>
+                  <div className="text-[14px] font-bold text-[#F04452] flex items-center gap-1.5">
+                    <Rocket className="w-4 h-4 shrink-0" />
+                    <span>{activeFiscalYear}년 회기 데이터 일괄 초기화</span>
+                  </div>
+                  <div className="text-[12px] text-[#4E5968] mt-0.5 break-words [word-break:keep-all]">
+                    현재 선택된 {activeFiscalYear}년 장부·영수증·목장·연간예산안·특별예산 청구서만 비웁니다. (다른 회계연도 데이터는 보존됩니다)
+                  </div>
               </div>
 
               <div className="bg-[#FFFFFF] rounded-xl px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">

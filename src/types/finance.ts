@@ -160,6 +160,7 @@ export interface BudgetLineItem {
 export type BudgetTemplateType = 'retreat_claim' | 'annual_budget';
 
 export interface BudgetDocument {
+  id?: string; // 복수 특별예산 청구서 식별자 (예: 'claim-1', 'claim-...')
   templateType: BudgetTemplateType;
   fiscalYear?: number;
   title: string;
@@ -187,6 +188,24 @@ export interface GeminiModelOption {
   description?: string;
 }
 
+export interface FiscalYearCloudRef {
+  folderId?: string;
+  folderUrl?: string;
+  spreadsheetId: string;
+  spreadsheetUrl: string;
+  receiptFolderId: string;
+  receiptFolderUrl: string;
+  lastSyncedAt?: string;
+  lastCloudModifiedTime?: string;
+}
+
+export interface AccountBalancesSummary {
+  general: number;
+  retreat: number;
+  mission: number;
+  total: number;
+}
+
 export interface AppSettings {
   gasWebAppUrl: string;
   googleClientId?: string;
@@ -197,6 +216,7 @@ export interface AppSettings {
   googleReceiptFolderId?: string;
   googleReceiptFolderUrl?: string;
   googleAutoSync?: boolean;
+  fiscalYearWorkspaces?: Record<string, FiscalYearCloudRef>;
   geminiApiKey: string;
   geminiModel: string;
   availableGeminiModels?: GeminiModelOption[];
